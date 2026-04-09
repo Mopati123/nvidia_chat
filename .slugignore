@@ -1,0 +1,6 @@
+test_integration.py
+test_full_system.py
+.git
+__pycache__
+*.pyc
+.DS_Store

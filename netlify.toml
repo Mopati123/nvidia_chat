@@ -1,0 +1,14 @@
+[build]
+  command = "pip install -r requirements.txt"
+  functions = "functions"
+
+[build.environment]
+  PYTHON_VERSION = "3.11"
+
+[[redirects]]
+  from = "/"
+  to = "/.netlify/functions/bot"
+  status = 200
+
+[functions]
+  directory = "netlify/functions"
