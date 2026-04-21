@@ -1,0 +1,161 @@
+// @version=5
+// TradingView Pine Script Connector for Quantum Trading System
+// Sends signals to Python backend via external data feature
+
+strategy("Quantum Trading Connector", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Signal Generation Parameters
+length = input.int(14, "RSI Length", minval=1)
+overbought = input.int(70, "Overbought Level", minval=50, maxval=100)
+oversold = input.int(30, "Oversold Level", minval=0, maxval=50)
+
+// Moving Average
+fastLength = input.int(9, "Fast EMA Length", minval=1)
+slowLength = input.int(21, "Slow EMA Length", minval=1)
+
+// ICT Parameters
+killzone_start = input.time("08:00", "London Killzone Start")
+killzone_end = input.time("10:00", "London Killzone End")
+
+// External Data Configuration
+external_url = input.string("http://localhost:8080/webhook", "Backend Webhook URL")
+api_key = input.string("", "API Key (for HMAC)")
+symbol_override = input.string("", "Symbol Override (empty = auto)")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INDICATORS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// RSI
+rsi = ta.rsi(close, length)
+
+// EMAs
+ema_fast = ta.ema(close, fastLength)
+ema_slow = ta.ema(slowLength)
+
+// Order Flow Imbalance proxy (tick volume delta)
+ofi_proxy = (close > open ? volume : -volume)
+
+// Microprice proxy
+microprice = (high + low) / 2
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNAL GENERATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Trend condition
+trend_bullish = ema_fast > ema_slow
+trend_bearish = ema_fast < ema_slow
+
+// RSI conditions
+rsi_oversold = rsi < oversold
+rsi_overbought = rsi > overbought
+
+// Combined signals
+long_condition = trend_bullish and rsi_oversold
+short_condition = trend_bearish and rsi_overbought
+
+// Killzone check
+in_killzone = (hour >= 8 and hour < 10) or (hour >= 13 and hour < 15)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNAL STATE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var int last_signal_bar = na
+var string current_signal = "NONE"
+var float signal_price = na
+
+// Generate new signal only if no signal in last 5 bars (rate limiting)
+can_generate_signal = bar_index - nz(last_signal_bar) > 5
+
+if long_condition and can_generate_signal
+    current_signal := "BUY"
+    signal_price := close
+    last_signal_bar := bar_index
+    
+if short_condition and can_generate_signal
+    current_signal := "SELL"
+    signal_price := close
+    last_signal_bar := bar_index
+
+// Clear signal after 10 bars
+if bar_index - nz(last_signal_bar) > 10
+    current_signal := "NONE"
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXTERNAL DATA OUTPUT (for Python backend)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Export signal data as external data
+// Python backend polls this via request.security()
+
+signal_data = current_signal == "BUY" ? 1 : current_signal == "SELL" ? -1 : 0
+
+// Build metadata string for external consumption
+metadata = "{" +
+    "\"symbol\":\"" + (symbol_override == "" ? syminfo.ticker : symbol_override) + "\"," +
+    "\"timeframe\":\"" + timeframe.period + "\"," +
+    "\"price\":" + str.tostring(close, format.mintick) + "," +
+    "\"signal\":\"" + current_signal + "\"," +
+    "\"rsi\":" + str.tostring(rsi, 2) + "," +
+    "\"ofi\":" + str.tostring(ofi_proxy, 0) + "," +
+    "\"microprice\":" + str.tostring(microprice, format.mintick) + "," +
+    "\"in_killzone\":" + str.tostring(in_killzone) + "," +
+    "\"timestamp\":" + str.tostring(time) +
+    "}"
+
+// Plot external data (visible to Python backend)
+plotshape(signal_data == 1, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(signal_data == -1, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Background color for killzone
+bgcolor(in_killzone ? color.new(color.yellow, 90) : na, title="Killzone")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STRATEGY EXECUTION (Paper Trading Only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if long_condition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    
+if short_condition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+
+// Exit conditions
+if strategy.position_size > 0 and rsi > overbought
+    strategy.close("Long", comment="RSI Overbought")
+    
+if strategy.position_size < 0 and rsi < oversold
+    strategy.close("Short", comment="RSI Oversold")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+plot(ema_fast, "Fast EMA", color.blue, 1)
+plot(ema_slow, "Slow EMA", color.orange, 1)
+hline(overbought, "Overbought", color.red, linestyle.dashed)
+hline(oversold, "Oversold", color.green, linestyle.dashed)
+plot(rsi, "RSI", color.purple, display=display.pane)
+
+// Info panel
+var table info_panel = table.new(position.top_right, 2, 6, bgcolor=color.black, frame_color=color.gray, frame_width=1)
+
+if barstate.islast
+    table.cell(info_panel, 0, 0, "Signal", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 0, current_signal, text_color=current_signal == "BUY" ? color.green : current_signal == "SELL" ? color.red : color.gray, text_size=size.small)
+    table.cell(info_panel, 0, 1, "RSI", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 1, str.tostring(rsi, 2), text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 0, 2, "OFI Proxy", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 2, str.tostring(ofi_proxy, 0), text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 0, 3, "Killzone", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 3, str.tostring(in_killzone), text_color=in_killzone ? color.yellow : color.gray, text_size=size.small)
+    table.cell(info_panel, 0, 4, "Trend", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 4, trend_bullish ? "BULLISH" : "BEARISH", text_color=trend_bullish ? color.green : color.red, text_size=size.small)
+    table.cell(info_panel, 0, 5, "Metadata", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 5, metadata, text_color=color.gray, text_size=size.tiny)

@@ -1,0 +1,43 @@
+{
+  "name": "ApexQuantumICT Trading Bot",
+  "description": "Telegram bot with NVIDIA AI and quantum-inspired ICT/SMC trading",
+  "keywords": ["telegram", "bot", "trading", "ai", "nvidia", "ict", "smc"],
+  "repository": "https://github.com/yourusername/apexquantumict-bot",
+  "logo": "",
+  "env": {
+    "NVAPI_KEY": {
+      "description": "NVIDIA API Key from build.nvidia.com",
+      "required": true
+    },
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Telegram Bot Token from @BotFather",
+      "required": true
+    },
+    "DERIV_API_TOKEN": {
+      "description": "Optional: Deriv API Token for live trading",
+      "required": false
+    },
+    "MAX_DAILY_LOSS": {
+      "description": "Maximum daily loss limit",
+      "value": "100",
+      "required": false
+    },
+    "MAX_POSITION_SIZE": {
+      "description": "Maximum position size in lots",
+      "value": "0.1",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "stack": "heroku-22",
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}

@@ -1,0 +1,665 @@
+"""
+orchestrator.py - 20-Stage Canonical Pipeline Orchestrator.
+
+Implements the complete transformation pipeline:
+
+Raw Data → State Construction → Path Generation → Constraint Filtering
+→ Action Evaluation → Interference Selection → Proposal → Admissibility
+→ Entropy Gate → Scheduler → Execution → Reconciliation → Evidence → Learning
+
+Each stage is a checkpointed transformation with typed inputs/outputs.
+"""
+
+import time
+import logging
+import numpy as np
+from typing import Dict, List, Optional, Tuple, Any, Callable
+from dataclasses import dataclass, field
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+class PipelineStage(Enum):
+    """Canonical 20-stage pipeline stages"""
+    # Data Ingestion
+    DATA_INGESTION = "data_ingestion"
+    STATE_CONSTRUCTION = "state_construction"
+    
+    # ICT Geometry
+    ICT_EXTRACTION = "ict_extraction"
+    
+    # Riemannian Geometry
+    GEOMETRY_COMPUTATION = "geometry_computation"
+    
+    # Path Generation
+    TRAJECTORY_GENERATION = "trajectory_generation"
+    RAMANUJAN_COMPRESSION = "ramanujan_compression"
+    
+    # Filtering & Validation
+    ADMISSIBILITY_FILTERING = "admissibility_filtering"
+    
+    # Action & Selection
+    ACTION_EVALUATION = "action_evaluation"
+    PATH_INTEGRAL = "path_integral"
+    INTERFERENCE_SELECTION = "interference_selection"
+    PATH_SELECTION = "path_selection"
+    
+    # Proposal & Gates
+    PROPOSAL_GENERATION = "proposal_generation"
+    ADMISSIBILITY_CHECK = "admissibility_check"
+    ENTROPY_GATE = "entropy_gate"
+    SCHEDULER_COLLAPSE = "scheduler_collapse"
+    
+    # Execution
+    EXECUTION = "execution"
+    RECONCILIATION = "reconciliation"
+    EVIDENCE_EMISSION = "evidence_emission"
+    
+    # Learning
+    WEIGHT_UPDATE = "weight_update"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class StageResult:
+    """Result from a pipeline stage execution"""
+    stage: PipelineStage
+    success: bool
+    output: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
+    duration_ms: float = 0.0
+    checkpoint_hash: str = ""
+
+
+@dataclass
+class PipelineContext:
+    """Context maintained through pipeline execution"""
+    symbol: str
+    timestamp: float
+    source: str  # 'MT5', 'Deriv', 'TradingView'
+    
+    # Stage outputs (checkpointed)
+    raw_data: Dict = field(default_factory=dict)
+    market_state: Dict = field(default_factory=dict)
+    ict_geometry: Dict = field(default_factory=dict)
+    geometry_data: Dict = field(default_factory=dict)  # Riemannian geometry
+    trajectories: List[Dict] = field(default_factory=list)
+    admissible_paths: List[Dict] = field(default_factory=list)
+    action_scores: Dict = field(default_factory=dict)
+    selected_path: Optional[Dict] = None
+    proposal: Dict = field(default_factory=dict)
+    collapse_decision: Optional[str] = None
+    execution_result: Dict = field(default_factory=dict)
+    reconciliation_status: str = ""
+    evidence_hash: str = ""
+    weight_update_result: Dict = field(default_factory=dict)
+    
+    # Metadata
+    stage_history: List[StageResult] = field(default_factory=list)
+    start_time: float = field(default_factory=time.time)
+    
+    @property
+    def duration_ms(self) -> float:
+        return (time.time() - self.start_time) * 1000
+
+
+class PipelineOrchestrator:
+    """
+    Master orchestrator for the 20-stage canonical pipeline.
+    
+    Implements the complete transformation from raw market data
+    to self-adapting action weights.
+    
+    Each stage:
+    1. Validates input from previous stage
+    2. Executes transformation
+    3. Produces checkpointed output
+    4. Continues or fails based on governance rules
+    """
+    
+    def __init__(self, 
+                 scheduler=None,
+                 use_microstructure: bool = True,
+                 use_weight_learning: bool = True):
+        """
+        Initialize pipeline orchestrator.
+        
+        Args:
+            scheduler: Scheduler instance (created if None)
+            use_microstructure: Enable tick-level microstructure processing
+            use_weight_learning: Enable backward-law weight updates
+        """
+        self.use_microstructure = use_microstructure
+        self.use_weight_learning = use_weight_learning
+        
+        # Initialize scheduler
+        if scheduler is None:
+            from ..kernel import Scheduler
+            scheduler = Scheduler()
+        self.scheduler = scheduler
+        
+        # Stage handlers
+        self.stage_handlers: Dict[PipelineStage, Callable] = {
+            PipelineStage.DATA_INGESTION: self._stage_data_ingestion,
+            PipelineStage.STATE_CONSTRUCTION: self._stage_state_construction,
+            PipelineStage.ICT_EXTRACTION: self._stage_ict_extraction,
+            PipelineStage.GEOMETRY_COMPUTATION: self._stage_geometry_computation,
+            PipelineStage.TRAJECTORY_GENERATION: self._stage_trajectory_generation,
+            PipelineStage.RAMANUJAN_COMPRESSION: self._stage_ramanujan_compression,
+            PipelineStage.ADMISSIBILITY_FILTERING: self._stage_admissibility_filtering,
+            PipelineStage.ACTION_EVALUATION: self._stage_action_evaluation,
+            PipelineStage.PATH_INTEGRAL: self._stage_path_integral,
+            PipelineStage.INTERFERENCE_SELECTION: self._stage_interference_selection,
+            PipelineStage.PATH_SELECTION: self._stage_path_selection,
+            PipelineStage.PROPOSAL_GENERATION: self._stage_proposal_generation,
+            PipelineStage.ADMISSIBILITY_CHECK: self._stage_admissibility_check,
+            PipelineStage.ENTROPY_GATE: self._stage_entropy_gate,
+            PipelineStage.SCHEDULER_COLLAPSE: self._stage_scheduler_collapse,
+            PipelineStage.EXECUTION: self._stage_execution,
+            PipelineStage.RECONCILIATION: self._stage_reconciliation,
+            PipelineStage.EVIDENCE_EMISSION: self._stage_evidence_emission,
+            PipelineStage.WEIGHT_UPDATE: self._stage_weight_update,
+        }
+        
+        # Statistics
+        self.execution_count = 0
+        self.success_count = 0
+        self.failure_count = 0
+        
+    def execute(self, raw_data: Dict, symbol: str, source: str = 'MT5') -> PipelineContext:
+        """
+        Execute complete 20-stage pipeline.
+        
+        Args:
+            raw_data: Raw market data (ticks, OHLCV)
+            symbol: Trading symbol
+            source: Data source ('MT5', 'Deriv', 'TradingView')
+        
+        Returns:
+            PipelineContext with full execution history
+        """
+        # Initialize context
+        context = PipelineContext(
+            symbol=symbol,
+            timestamp=time.time(),
+            source=source,
+            raw_data=raw_data
+        )
+        
+        logger.info(f"Starting pipeline execution for {symbol}")
+        
+        # Execute stages in sequence
+        stages = [
+            PipelineStage.DATA_INGESTION,
+            PipelineStage.STATE_CONSTRUCTION,
+            PipelineStage.ICT_EXTRACTION,
+            PipelineStage.GEOMETRY_COMPUTATION,
+            PipelineStage.TRAJECTORY_GENERATION,
+            PipelineStage.RAMANUJAN_COMPRESSION,
+            PipelineStage.ADMISSIBILITY_FILTERING,
+            PipelineStage.ACTION_EVALUATION,
+            PipelineStage.PATH_INTEGRAL,
+            PipelineStage.INTERFERENCE_SELECTION,
+            PipelineStage.PATH_SELECTION,
+            PipelineStage.PROPOSAL_GENERATION,
+            PipelineStage.ADMISSIBILITY_CHECK,
+            PipelineStage.ENTROPY_GATE,
+            PipelineStage.SCHEDULER_COLLAPSE,
+            PipelineStage.EXECUTION,
+            PipelineStage.RECONCILIATION,
+            PipelineStage.EVIDENCE_EMISSION,
+            PipelineStage.WEIGHT_UPDATE,
+        ]
+        
+        for stage in stages:
+            result = self._execute_stage(stage, context)
+            context.stage_history.append(result)
+            
+            if not result.success:
+                logger.warning(f"Pipeline failed at stage {stage.value}: {result.error}")
+                context.stage_history.append(
+                    StageResult(stage=PipelineStage.FAILED, success=False, error=result.error)
+                )
+                self.failure_count += 1
+                return context
+            
+            # Check for early termination
+            if stage == PipelineStage.SCHEDULER_COLLAPSE:
+                if context.collapse_decision == 'REFUSED':
+                    logger.info("Scheduler refused collapse - terminating pipeline")
+                    context.stage_history.append(
+                        StageResult(stage=PipelineStage.COMPLETED, success=True, 
+                                   output={'reason': 'scheduler_refused'})
+                    )
+                    self.success_count += 1
+                    return context
+        
+        # Completed successfully
+        context.stage_history.append(
+            StageResult(stage=PipelineStage.COMPLETED, success=True,
+                       output={'duration_ms': context.duration_ms})
+        )
+        
+        self.execution_count += 1
+        self.success_count += 1
+        
+        logger.info(f"Pipeline completed in {context.duration_ms:.2f}ms")
+        
+        return context
+    
+    def _execute_stage(self, stage: PipelineStage, context: PipelineContext) -> StageResult:
+        """Execute a single pipeline stage"""
+        start = time.time()
+        
+        handler = self.stage_handlers.get(stage)
+        if handler is None:
+            return StageResult(
+                stage=stage,
+                success=False,
+                error=f"No handler for stage {stage}"
+            )
+        
+        try:
+            output = handler(context)
+            duration = (time.time() - start) * 1000
+            
+            # Create checkpoint hash
+            import hashlib
+            checkpoint_data = f"{stage.value}:{context.symbol}:{context.timestamp}"
+            checkpoint_hash = hashlib.sha256(checkpoint_data.encode()).hexdigest()[:16]
+            
+            return StageResult(
+                stage=stage,
+                success=True,
+                output=output,
+                duration_ms=duration,
+                checkpoint_hash=checkpoint_hash
+            )
+            
+        except Exception as e:
+            duration = (time.time() - start) * 1000
+            logger.error(f"Stage {stage.value} failed: {e}")
+            return StageResult(
+                stage=stage,
+                success=False,
+                error=str(e),
+                duration_ms=duration
+            )
+    
+    # === STAGE HANDLERS ===
+    
+    def _stage_data_ingestion(self, context: PipelineContext) -> Dict:
+        """Stage 1: Normalize raw data into canonical format"""
+        # Already done in context initialization
+        return {'normalized': True, 'source': context.source}
+    
+    def _stage_state_construction(self, context: PipelineContext) -> Dict:
+        """Stage 2: Build MarketState from raw data"""
+        # If microstructure enabled, process ticks
+        if self.use_microstructure and 'ticks' in context.raw_data:
+            from ..microstructure import TickProcessor
+            processor = TickProcessor()
+            
+            micro = None
+            for tick in context.raw_data['ticks']:
+                micro = processor.process_tick(tick)
+            
+            if micro:
+                context.market_state['microstructure'] = micro
+        
+        context.market_state['ohlcv'] = context.raw_data.get('ohlcv', [])
+        context.market_state['symbol'] = context.symbol
+        
+        return {'state_built': True}
+    
+    def _stage_ict_extraction(self, context: PipelineContext) -> Dict:
+        """Stage 3: Extract ICT geometry (liquidity, FVGs, structure)"""
+        # This would call ICT operators
+        # For now, placeholder
+        context.ict_geometry = {
+            'liquidity_zones': context.raw_data.get('liquidity_zones', []),
+            'fvgs': context.raw_data.get('fvgs', []),
+            'session': context.raw_data.get('session', 'ny'),
+            'htf_bias': context.raw_data.get('htf_bias', 'neutral'),
+        }
+        
+        return {'ict_extracted': True}
+    
+    def _stage_geometry_computation(self, context: PipelineContext) -> Dict:
+        """
+        Stage 4: Riemannian geometry computation.
+        
+        Computes:
+        - Liquidity field ϕ(p,t)
+        - Metric tensor g_ij
+        - Christoffel symbols Γ^i_jk
+        - Gaussian curvature K
+        """
+        from ..geometry import (
+            LiquidityField, ConformalMetric,
+            ChristoffelSymbols, compute_christoffel,
+            CurvatureAnalyzer
+        )
+        
+        # Get current price/time
+        micro = context.market_state.get('microstructure', {})
+        price = micro.get('mid', 1.0)
+        timestamp = context.timestamp
+        
+        # Initialize geometry components
+        liquidity_field = LiquidityField()
+        curvature_analyzer = CurvatureAnalyzer(liquidity_field)
+        
+        # Compute geometry at current point
+        try:
+            # Liquidity field
+            phi = liquidity_field.compute(price, timestamp, context.ict_geometry, micro)
+            
+            # Metric
+            metric = ConformalMetric(phi)
+            g = metric.get_metric_tensor()
+            
+            # Christoffel symbols
+            d_phi_dp, d_phi_dt = liquidity_field.compute_gradient(
+                price, timestamp, context.ict_geometry, micro
+            )
+            christoffel = compute_christoffel(d_phi_dp, d_phi_dt)
+            
+            # Curvature
+            curvature_data = curvature_analyzer.analyze_point(
+                price, timestamp, context.ict_geometry, micro
+            )
+            
+            # Store geometry data
+            context.geometry_data = {
+                'phi': phi,
+                'metric': {
+                    'g_pp': g.g_pp,
+                    'g_tt': g.g_tt,
+                    'determinant': g.determinant,
+                },
+                'christoffel': christoffel.as_dict(),
+                'curvature': curvature_data.to_dict(),
+                'regime': curvature_data.regime.value,
+            }
+            
+            return {
+                'geometry_computed': True,
+                'phi': phi,
+                'curvature_K': curvature_data.gaussian_curvature,
+                'regime': curvature_data.regime.value,
+            }
+            
+        except Exception as e:
+            logger.warning(f"Geometry computation failed: {e}")
+            # Continue without geometry (graceful degradation)
+            context.geometry_data = {}
+            return {'geometry_computed': False, 'error': str(e)}
+    
+    def _stage_trajectory_generation(self, context: PipelineContext) -> Dict:
+        """Stage 4: Generate candidate trajectory families"""
+        from ..path_integral import LeastActionGenerator
+        
+        generator = LeastActionGenerator(n_trajectories=5)
+        
+        # Mock generation (would use real operator registry)
+        initial_state = {
+            'price': context.market_state.get('microstructure', {}).get('mid', 1.0),
+            'velocity': context.market_state.get('microstructure', {}).get('velocity', 0.0),
+        }
+        
+        # Create simple trajectories
+        context.trajectories = [
+            {
+                'id': f'traj_{i}',
+                'path': [(j, initial_state['price'] + i * 0.0001 * j) for j in range(20)],
+                'energy': 0.5 + i * 0.1,
+            }
+            for i in range(5)
+        ]
+        
+        return {'trajectories_generated': len(context.trajectories)}
+    
+    def _stage_ramanujan_compression(self, context: PipelineContext) -> Dict:
+        """Stage 5: Compress paths into families"""
+        # Group trajectories by behavior type
+        families = {
+            'sweep_continuation': context.trajectories[:2],
+            'reversal': context.trajectories[2:4],
+            'consolidation': context.trajectories[4:],
+        }
+        
+        return {'families': list(families.keys())}
+    
+    def _stage_admissibility_filtering(self, context: PipelineContext) -> Dict:
+        """Stage 6: Π_total - Filter illegal paths"""
+        # All paths admissible for now
+        context.admissible_paths = context.trajectories
+        
+        return {'admissible_count': len(context.admissible_paths)}
+    
+    def _stage_action_evaluation(self, context: PipelineContext) -> Dict:
+        """Stage 7: Compute S[γ] for each path"""
+        if self.use_microstructure:
+            from ..action.upgraded_components import UpgradedActionComponents
+            
+            action_comp = UpgradedActionComponents()
+            weights = self.scheduler.get_action_weights()
+            
+            microstate = {
+                'ict_geometry': context.ict_geometry,
+                'market_state': context.market_state,
+            }
+            
+            for traj in context.admissible_paths:
+                # Convert path format
+                path = [{'price': p[1], 'ofi': 0.0, 'timestamp': p[0]} for p in traj['path']]
+                
+                result = action_comp.compute_full_action(path, microstate, weights)
+                context.action_scores[traj['id']] = result
+                traj['action'] = result['total_action']
+        
+        return {'actions_computed': len(context.action_scores)}
+    
+    def _stage_path_integral(self, context: PipelineContext) -> Dict:
+        """Stage 8: Compute Ψ = Σ e^(iS/ℏ)"""
+        # Weight by exp(-action)
+        epsilon = 0.015  # ℏ
+        
+        for traj in context.admissible_paths:
+            action = traj.get('action', 1.0)
+            traj['weight'] = np.exp(-action / epsilon)
+        
+        return {'integral_computed': True}
+    
+    def _stage_interference_selection(self, context: PipelineContext) -> Dict:
+        """Stage 9: Interference suppresses bad paths"""
+        # High weight = low action = survives
+        # Already weighted in previous stage
+        return {'interference_applied': True}
+    
+    def _stage_path_selection(self, context: PipelineContext) -> Dict:
+        """Stage 10: Select least-action trajectory"""
+        if not context.admissible_paths:
+            return {'selected': None}
+        
+        # Select max weight = min action
+        best = max(context.admissible_paths, key=lambda t: t.get('weight', 0))
+        context.selected_path = best
+        
+        return {'selected_id': best['id'], 'action': best.get('action', 0)}
+    
+    def _stage_proposal_generation(self, context: PipelineContext) -> Dict:
+        """Stage 11: Extract trade proposal from selected path"""
+        if context.selected_path is None:
+            return {'proposal': None}
+        
+        # Extract entry from first step
+        first_price = context.selected_path['path'][0][1]
+        
+        context.proposal = {
+            'direction': 'buy',  # Would determine from structure
+            'entry': first_price,
+            'stop': first_price - 0.0010,
+            'target': first_price + 0.0020,
+            'path_id': context.selected_path['id'],
+        }
+        
+        return {'proposal': context.proposal}
+    
+    def _stage_admissibility_check(self, context: PipelineContext) -> Dict:
+        """Stage 12: Final admissibility check (risk, limits)"""
+        # Check risk limits
+        proposal = context.proposal
+        if not proposal:
+            return {'admissible': False}
+        
+        # Simple risk check
+        risk_ok = proposal['entry'] - proposal['stop'] < 0.0020  # 20 pips max
+        
+        return {'admissible': risk_ok, 'risk_ok': risk_ok}
+    
+    def _stage_entropy_gate(self, context: PipelineContext) -> Dict:
+        """Stage 13: ΔS check - information gain threshold"""
+        # Mock entropy calculation
+        delta_s = 0.3  # Would compute from path variance
+        
+        threshold = 0.5
+        passed = delta_s < threshold
+        
+        return {'delta_s': delta_s, 'passed': passed}
+    
+    def _stage_scheduler_collapse(self, context: PipelineContext) -> Dict:
+        """Stage 14: Scheduler authorization (Λ)"""
+        from ..kernel.scheduler import CollapseDecision
+        
+        # Build trajectory dict for scheduler
+        projected = [{
+            'id': t['id'],
+            'energy': t['energy'],
+            'action': t.get('action', 1.0),
+            'operator_scores': {},
+        } for t in context.admissible_paths]
+        
+        decision, token = self.scheduler.authorize_collapse(
+            proposal=context.proposal,
+            projected_trajectories=projected,
+            delta_s=0.3,
+            constraints_passed=True,
+            reconciliation_clear=True
+        )
+        
+        context.collapse_decision = decision.name
+        
+        return {
+            'decision': decision.name,
+            'authorized': decision == CollapseDecision.AUTHORIZED,
+            'token': token.token_id if token else None
+        }
+    
+    def _stage_execution(self, context: PipelineContext) -> Dict:
+        """Stage 15: Execute trade"""
+        if context.collapse_decision != 'AUTHORIZED':
+            return {'executed': False}
+        
+        # Mock execution
+        context.execution_result = {
+            'order_id': f'ord_{int(time.time())}',
+            'symbol': context.symbol,
+            'entry_price': context.proposal['entry'],
+            'status': 'filled',
+        }
+        
+        return {'executed': True, 'order': context.execution_result}
+    
+    def _stage_reconciliation(self, context: PipelineContext) -> Dict:
+        """Stage 16: Compare intended vs actual execution"""
+        if not context.execution_result:
+            context.reconciliation_status = 'no_execution'
+            return {'status': 'no_execution'}
+        
+        # Mock reconciliation - would compare with broker data
+        predicted = context.proposal['entry']
+        actual = context.execution_result['entry_price']
+        divergence = abs(predicted - actual)
+        
+        if divergence < 0.0001:  # 1 pip
+            status = 'match'
+        elif divergence < 0.0005:  # 5 pips
+            status = 'mismatch'
+        else:
+            status = 'rollback'
+        
+        context.reconciliation_status = status
+        
+        return {'status': status, 'divergence': divergence}
+    
+    def _stage_evidence_emission(self, context: PipelineContext) -> Dict:
+        """Stage 17: Emit cryptographic evidence"""
+        import hashlib
+        
+        evidence_data = {
+            'symbol': context.symbol,
+            'proposal': context.proposal,
+            'decision': context.collapse_decision,
+            'execution': context.execution_result,
+            'reconciliation': context.reconciliation_status,
+        }
+        
+        evidence_str = str(evidence_data)
+        context.evidence_hash = hashlib.sha256(evidence_str.encode()).hexdigest()[:32]
+        
+        return {'evidence_hash': context.evidence_hash}
+    
+    def _stage_weight_update(self, context: PipelineContext) -> Dict:
+        """Stage 18: Backward learning - update action weights"""
+        if not self.use_weight_learning:
+            return {'updated': False, 'reason': 'learning_disabled'}
+        
+        if context.collapse_decision != 'AUTHORIZED':
+            return {'updated': False, 'reason': 'not_authorized'}
+        
+        # Get PnL (mock for now)
+        pnl = 50.0 if context.reconciliation_status == 'match' else -20.0
+        
+        # Get contributions from selected path
+        if context.selected_path:
+            path_id = context.selected_path['id']
+            action_result = context.action_scores.get(path_id, {})
+            contrib = {
+                'L': action_result.get('S_L', 0) * 100,
+                'T': action_result.get('S_T', 0) * 100,
+                'E': action_result.get('S_E', 0) * 100,
+                'R': action_result.get('S_R', 0) * 100,
+            }
+        else:
+            contrib = {'L': 25, 'T': 25, 'E': 25, 'R': 25}
+        
+        # Update weights
+        result = self.scheduler.update_action_weights(
+            pnl=pnl,
+            delta_s=0.3,
+            status=context.reconciliation_status,
+            contrib=contrib,
+            constraints_passed=True,
+            evidence_complete=True
+        )
+        
+        context.weight_update_result = result
+        
+        return {
+            'updated': result['updated'],
+            'reward': result['reward'],
+            'new_weights': result['new_weights']
+        }
+    
+    def get_statistics(self) -> Dict:
+        """Get pipeline execution statistics"""
+        return {
+            'total_executions': self.execution_count,
+            'successful': self.success_count,
+            'failed': self.failure_count,
+            'success_rate': self.success_count / max(self.execution_count, 1),
+        }

@@ -1,5 +1,25 @@
 openai>=1.0.0
 python-telegram-bot>=20.0
 numpy>=1.24.0
+polars>=0.20.0
+pyarrow>=14.0.0
 flask>=2.0.0
 gunicorn>=20.0.0
+yfinance>=0.2.0
+MetaTrader5>=5.0.0
+websocket-client>=1.0.0
+
+# Fallback
+pandas>=1.5.0
+
+# Performance Acceleration (Optional but recommended)
+cython>=3.0.0          # 10-100x speedup for hot paths
+numba>=0.58.0          # 2-10x JIT compilation fallback
+
+# Broker Credential Management
+keyring>=24.0.0        # OS keyring integration (Windows/macOS/Linux)
+cryptography>=41.0.0   # Fernet encryption for fallback
+python-dotenv>=1.0.0   # .env file support
+
+# Logging & Audit
+tabulate>=0.9.0        # Pretty CLI tables

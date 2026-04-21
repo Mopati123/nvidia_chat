@@ -47,3 +47,14 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
+
+# Credential storage
+*.enc
+.apexquantumict/
+data/
+
+# Credentials backup
+*credentials*
+*password*
+!setup_credentials.py

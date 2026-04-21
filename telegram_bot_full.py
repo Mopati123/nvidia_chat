@@ -7,6 +7,10 @@ from collections import defaultdict
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (override=True forces reload)
+load_dotenv(override=True)
 
 # ApexQuantumICT Trading System imports
 try:
@@ -14,9 +18,12 @@ try:
     from trading.operators.operator_registry import OperatorRegistry
     from trading.evidence.evidence_chain import EvidenceEmitter
     from trading.market_bridge.minkowski_adapter import MarketDataAdapter
+    from trading.brokers.market_data import market_feed
+    from trading_live import live_trading, add_live_trading_handlers
     TRADING_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     TRADING_AVAILABLE = False
+    logger.warning(f"Trading imports failed: {e}")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -86,6 +93,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • /operators - List all 18 ICT operators (FVG, OB, LP, OTE, etc.)
 • /constraints - Check constraint Hamiltonian status
 • /trading - Shadow system status (𝔖 = (X, g, Φ, Π, ℳ, Λ, ℛ, ℰ))
+
+**💰 Live Trading Commands:**
+• /mode [shadow|demo|live] - Set trading mode
+• /connect <mt5|deriv> - Connect broker
+• /trade <symbol> <buy|sell> [volume] - Execute trade
+• /positions - Show open positions
+
+**🏦 Broker Management:**
+• /broker_list - List stored broker accounts
+• /broker_test <deriv|mt5> - Test broker connection
+• /broker_status - Quick health check of all brokers
 
 **Features:**
 ✅ NVIDIA AI models (Falcon 3, Nemotron 70B, Qwen)
@@ -307,8 +325,11 @@ async def market_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action="typing")
     
     try:
-        # Generate synthetic OHLCV data for demo (replace with real data feed)
-        ohlcv = _generate_demo_ohlcv(symbol)
+        # Fetch real OHLCV data from Yahoo Finance
+        ohlcv = market_feed.fetch_ohlcv(symbol, period="5d", interval="1h")
+        if not ohlcv:
+            await update.message.reply_text(f"❌ No market data available for {symbol}")
+            return
         
         # Run shadow analysis (no capital at risk)
         analysis = trading_system.analyze_setup(symbol, ohlcv)
@@ -364,8 +385,12 @@ async def shadow_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action="typing")
     
     try:
-        # Generate demo data (replace with real feed)
-        ohlcv = _generate_demo_ohlcv(symbol)
+        # Fetch real OHLCV data from Yahoo Finance
+        ohlcv = market_feed.fetch_ohlcv(symbol, period="5d", interval="1h")
+        if not ohlcv:
+            await update.message.reply_text(f"❌ No market data available for {symbol}")
+            return
+        
         session = MarketDataAdapter().get_session()
         
         # Execute shadow trading loop
@@ -519,6 +544,188 @@ async def trading_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
+async def broker_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all stored broker accounts"""
+    await update.message.chat.send_action(action="typing")
+    
+    try:
+        from trading.brokers.credentials import get_credential_manager
+        
+        manager = get_credential_manager("apex_secure_2024")
+        accounts = manager.list_stored_accounts()
+        
+        if not accounts:
+            await update.message.reply_text(
+                "📭 No broker accounts stored.\n\n"
+                "Add accounts with CLI:\n"
+                "`python manage_brokers.py add deriv`\n"
+                "`python manage_brokers.py add mt5`"
+            )
+            return
+        
+        # Group by broker type
+        from collections import defaultdict
+        grouped = defaultdict(list)
+        for broker_type, name in accounts:
+            grouped[broker_type].append(name)
+        
+        lines = ["📋 **Stored Broker Accounts**\n"]
+        
+        for broker_type, names in grouped.items():
+            lines.append(f"\n🔹 **{broker_type.upper()}**")
+            for name in names:
+                cred = manager.get_credential(broker_type, name)
+                if cred:
+                    emoji = "🧪" if cred.is_demo else "💰"
+                    account_id = cred.account_id if cred.account_id else "API Token"
+                    lines.append(f"   {emoji} `{name}`: {account_id}")
+        
+        lines.append(f"\n✅ Total: {len(accounts)} accounts")
+        lines.append("\nTest with: `/broker_test deriv` or `/broker_test mt5`")
+        
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Broker list error: {e}")
+        await update.message.reply_text(f"❌ Error listing accounts: {str(e)}")
+
+
+async def broker_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test broker connection (deriv or mt5)"""
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "Usage: `/broker_test deriv` or `/broker_test mt5`\n"
+            "Tests connection to your stored broker credentials."
+        )
+        return
+    
+    broker_type = args[0].lower()
+    if broker_type not in ['deriv', 'mt5']:
+        await update.message.reply_text("❌ Supported brokers: `deriv`, `mt5`")
+        return
+    
+    await update.message.chat.send_action(action="typing")
+    
+    try:
+        from trading.brokers.credentials import get_credential_manager
+        
+        manager = get_credential_manager("apex_secure_2024")
+        
+        if broker_type == 'deriv':
+            cred = manager.get_credential('deriv', 'demo')
+            if not cred:
+                await update.message.reply_text("❌ No Deriv credentials found. Run: `python manage_brokers.py add deriv`")
+                return
+            
+            token = cred.credentials.get('token', '')
+            await update.message.reply_text("🧪 Testing Deriv connection...")
+            
+            from trading.brokers.deriv_broker import DerivBroker
+            success, message, info = DerivBroker.test_connection(token)
+            
+            if success and info:
+                status = f"""✅ **Deriv Connected**
+
+**Account:** `{info.get('loginid')}`
+**Balance:** `{info.get('balance')} {info.get('currency')}`
+**Demo:** {'Yes' if info.get('demo') else 'No'}
+
+Ready for trading!"""
+                await update.message.reply_text(status, parse_mode="Markdown")
+            else:
+                await update.message.reply_text(f"❌ {message}")
+        
+        elif broker_type == 'mt5':
+            cred = manager.get_credential('mt5', 'default')
+            if not cred:
+                await update.message.reply_text("❌ No MT5 credentials found. Run: `python manage_brokers.py add mt5`")
+                return
+            
+            account = cred.account_id
+            password = cred.credentials.get('password', '')
+            server = cred.credentials.get('server', '')
+            
+            await update.message.reply_text(f"🧪 Testing MT5 connection to `{server}`...\n⏳ This may take 10-15 seconds")
+            
+            from trading.brokers.mt5_broker import MT5Broker
+            success, message, info = MT5Broker.test_connection(
+                int(account), password, server, max_retries=5
+            )
+            
+            if success and info:
+                mode = "🧪 Demo" if info.get('trade_mode') == 'demo' else "💰 Live"
+                status = f"""✅ **MT5 Connected**
+
+**Account:** `{info.get('login')}`
+**Server:** `{info.get('server')}`
+**Type:** {mode}
+**Balance:** `{info.get('balance')} {info.get('currency')}`
+**Equity:** `{info.get('equity')}`
+
+Ready for trading!"""
+                await update.message.reply_text(status, parse_mode="Markdown")
+            else:
+                error_msg = f"❌ {message}\n\nMake sure MT5 terminal is running.\nLaunch with: `python launch_mt5_auto.py`"
+                await update.message.reply_text(error_msg)
+    
+    except Exception as e:
+        logger.error(f"Broker test error: {e}")
+        await update.message.reply_text(f"❌ Error testing connection: {str(e)}")
+
+
+async def broker_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quick health check of all brokers"""
+    await update.message.chat.send_action(action="typing")
+    
+    try:
+        from trading.brokers.credentials import get_credential_manager
+        from trading.brokers.deriv_broker import DerivBroker
+        
+        manager = get_credential_manager("apex_secure_2024")
+        accounts = manager.list_stored_accounts()
+        
+        if not accounts:
+            await update.message.reply_text("📭 No accounts configured. Use `/broker_list` to see setup instructions.")
+            return
+        
+        lines = ["🏥 **Broker Health Status**\n"]
+        
+        for broker_type, name in accounts:
+            cred = manager.get_credential(broker_type, name)
+            if not cred:
+                continue
+            
+            if broker_type == 'deriv':
+                token = cred.credentials.get('token', '')
+                success, _, info = DerivBroker.test_connection(token)
+                emoji = "🟢" if success else "🔴"
+                balance = f"{info.get('balance')} {info.get('currency')}" if info else "N/A"
+                lines.append(f"{emoji} **Deriv** (`{name}`): {balance}")
+            
+            elif broker_type == 'mt5':
+                # Check if MT5 process is running
+                import subprocess
+                try:
+                    result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq terminal64.exe'], 
+                                          capture_output=True, text=True)
+                    mt5_running = 'terminal64.exe' in result.stdout
+                except:
+                    mt5_running = False
+                
+                emoji = "🟡" if mt5_running else "🔴"
+                status = "Running" if mt5_running else "Not running"
+                lines.append(f"{emoji} **MT5** (`{name}`): {status} (run `/broker_test mt5` to verify)")
+        
+        lines.append("\n🟢 = Connected | 🟡 = Running (need test) | 🔴 = Offline")
+        
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Broker status error: {e}")
+        await update.message.reply_text(f"❌ Error checking status: {str(e)}")
+
+
 def _generate_demo_ohlcv(symbol: str, n: int = 20) -> list:
     """Generate synthetic OHLCV for demo purposes"""
     import random
@@ -579,6 +786,14 @@ def main():
     application.add_handler(CommandHandler("operators", list_operators))
     application.add_handler(CommandHandler("constraints", check_constraints))
     application.add_handler(CommandHandler("trading", trading_status))
+    
+    # Broker management commands
+    application.add_handler(CommandHandler("broker_list", broker_list))
+    application.add_handler(CommandHandler("broker_test", broker_test))
+    application.add_handler(CommandHandler("broker_status", broker_status))
+    
+    # Live trading commands (MT5 + Deriv + yfinance)
+    add_live_trading_handlers(application)
     
     # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))

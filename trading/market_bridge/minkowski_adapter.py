@@ -14,6 +14,9 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -40,10 +43,28 @@ class MinkowskiAdapter:
     Minkowski metric in 2D (price, time):
     ds² = -c²dt² + dx²
     where c = characteristic price velocity
+    
+    NN Integration:
+    - Optional price predictor for learned potentials
+    - Hybrid: 70% hand-crafted ICT + 30% NN (configurable)
     """
     
-    def __init__(self, light_speed: float = 1.0):
+    def __init__(self, light_speed: float = 1.0, use_nn: bool = False, nn_weight: float = 0.3):
         self.c = light_speed  # Characteristic price velocity
+        self.use_nn = use_nn
+        self.nn_weight = nn_weight  # Weight for NN potentials (0-1)
+        self._price_predictor = None
+        
+    def _get_price_predictor(self):
+        """Lazy initialization of price predictor"""
+        if self._price_predictor is None and self.use_nn:
+            try:
+                from ..models import get_predictor
+                self._price_predictor = get_predictor()
+            except Exception as e:
+                logger.warning(f"Could not load price predictor: {e}, falling back to ICT only")
+                self.use_nn = False
+        return self._price_predictor
         
     def transform(self, ohlcv_data: List[Dict]) -> MarketTuple:
         """
@@ -77,6 +98,9 @@ class MinkowskiAdapter:
         prices = [d["close"] for d in data]
         times = [d.get("timestamp", i) for i, d in enumerate(data)]
         volumes = [d.get("volume", 0) for d in data]
+        opens = [d.get("open", d["close"]) for d in data]
+        highs = [d.get("high", d["close"]) for d in data]
+        lows = [d.get("low", d["close"]) for d in data]
         
         # Proper time along worldline
         proper_times = []
@@ -87,10 +111,28 @@ class MinkowskiAdapter:
             ds_squared = (self.c * dt)**2 - dx**2
             proper_times.append(np.sqrt(abs(ds_squared)))
         
+        # Build OHLC array for operators that need it
+        ohlc = []
+        for i, d in enumerate(data):
+            ohlc.append({
+                "open": d.get("open", prices[i]),
+                "high": d.get("high", prices[i]),
+                "low": d.get("low", prices[i]),
+                "close": prices[i],
+                "volume": volumes[i]
+            })
+        
         return {
             "coordinates": list(zip(times, prices)),
             "prices": prices,
+            "opens": opens,
+            "highs": highs,
+            "lows": lows,
+            "closes": prices,
             "volumes": volumes,
+            "ohlc": ohlc,
+            "close": prices[-1] if prices else 0,
+            "volume": volumes[-1] if volumes else 0,
             "proper_times": proper_times,
             "dimension": 2,
             "topology": "price_time_cylinder"
@@ -152,10 +194,29 @@ class MinkowskiAdapter:
         else:
             momentum = 0
         
+        # Base ICT potentials
+        ict_energy = avg_range + momentum
+        
+        # NN-augmented potentials (if enabled)
+        nn_potential = 0.0
+        if self.use_nn and len(data) >= 100:
+            try:
+                predictor = self._get_price_predictor()
+                if predictor:
+                    prediction = predictor.predict(data)
+                    nn_potential = predictor.to_potential(prediction)
+            except Exception as e:
+                logger.debug(f"NN potential computation failed: {e}")
+        
+        # Hybrid combination: (1-w)*ICT + w*NN
+        total_energy = (1 - self.nn_weight) * ict_energy + self.nn_weight * nn_potential
+        
         return {
-            "total_energy": avg_range + momentum,
+            "total_energy": total_energy,
             "kinetic": momentum,
             "potential": avg_range,
+            "nn_potential": nn_potential,
+            "nn_weight": self.nn_weight if self.use_nn else 0.0,
             "vwap": vwap,
             "support": min(lows) if lows else 0,
             "resistance": max(highs) if highs else 0,
@@ -204,12 +265,23 @@ class MinkowskiAdapter:
     
     def get_market_state(self, market_tuple: MarketTuple) -> Dict:
         """Extract flat market state from tuple for operator consumption"""
+        ohlc = market_tuple.M.get("ohlc", [])
+        opens = market_tuple.M.get("opens", [])
+        closes = market_tuple.M.get("closes", [])
+        volumes = market_tuple.M.get("volumes", [])
+        highs = [candle.get("high", market_tuple.H.get("resistance", 0)) for candle in ohlc]
+        lows = [candle.get("low", market_tuple.H.get("support", 0)) for candle in ohlc]
+
         return {
             "prices": market_tuple.M.get("prices", []),
-            "highs": [market_tuple.H.get("resistance", 0)] * len(market_tuple.M.get("prices", [])),
-            "lows": [market_tuple.H.get("support", 0)] * len(market_tuple.M.get("prices", [])),
-            "close": market_tuple.Pi.get("observable", {}).get("current_price", 0),
-            "volume": market_tuple.M.get("volumes", []),
+            "highs": highs,
+            "lows": lows,
+            "opens": opens,
+            "closes": closes,
+            "ohlc": ohlc,
+            "close": market_tuple.Pi.get("observable", {}).get("current_price", closes[-1] if closes else 0),
+            "volume": volumes,
+            "volumes": volumes,
             "vwap": market_tuple.H.get("vwap", 0),
             "volatility": market_tuple.Pi.get("uncertainty", 0),
             "regime": market_tuple.Pi.get("observable", {}).get("trend_direction", "neutral")
@@ -219,10 +291,12 @@ class MinkowskiAdapter:
 class MarketDataAdapter:
     """
     High-level adapter: raw OHLCV → market state for operators
+    
+    Supports NN-augmented potentials for enhanced trajectory generation.
     """
     
-    def __init__(self):
-        self.minkowski = MinkowskiAdapter()
+    def __init__(self, use_nn: bool = False, nn_weight: float = 0.3):
+        self.minkowski = MinkowskiAdapter(use_nn=use_nn, nn_weight=nn_weight)
         
     def adapt(self, ohlcv_data: List[Dict]) -> Dict:
         """

@@ -18,6 +18,16 @@ import numpy as np
 from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass
 from enum import Enum
+import logging
+
+# Accelerated backend integration for Hamiltonian computation
+try:
+    from ..accelerated.backend_selector import get_backend, ACCELERATED_AVAILABLE
+    ACCELERATED = True
+except ImportError:
+    ACCELERATED = False
+    logger = logging.getLogger(__name__)
+    logger.debug("Accelerated operators not available")
 
 
 class OperatorType(Enum):
@@ -612,6 +622,35 @@ class OperatorRegistry:
     
     def get_hamiltonian(self, market_data: Dict, state: Dict) -> Dict[str, float]:
         """Compute full market Hamiltonian H_market = Σ α_k O_k"""
+        # Check if we can use accelerated backend
+        if ACCELERATED and 'prices' in market_data:
+            try:
+                backend = get_backend()
+                prices = np.array(market_data.get('prices', []))
+                if len(prices) > 0:
+                    # Get OHLCV data
+                    highs = np.array(market_data.get('highs', prices))
+                    lows = np.array(market_data.get('lows', prices))
+                    opens = np.array(market_data.get('opens', prices))
+                    closes = np.array(market_data.get('closes', prices))
+                    volumes = np.array(market_data.get('volumes', np.ones(len(prices))), dtype=np.int32)
+                    
+                    # Use accelerated Hamiltonian computation
+                    weights = np.ones(18) / 18  # Equal weights
+                    H_value = backend.compute_hamiltonian_fast(
+                        prices, highs, lows, opens, closes, volumes, weights
+                    )
+                    
+                    # Return with standard format
+                    return {
+                        'total_energy': H_value,
+                        'accelerated': True,
+                        'backend': 'cython' if hasattr(backend, 'preferred') else 'numpy'
+                    }
+            except Exception:
+                pass  # Fall through to standard computation
+        
+        # Standard computation (fallback)
         contributions = {}
         for name, op in self.operators.items():
             if op.meta.type == OperatorType.POTENTIAL:
@@ -620,6 +659,31 @@ class OperatorRegistry:
     
     def get_all_scores(self, market_data: Dict, state: Dict) -> Dict[str, float]:
         """Get scores from all 18 operators"""
+        # Try accelerated path first
+        if ACCELERATED and 'prices' in market_data:
+            try:
+                backend = get_backend()
+                prices = np.array(market_data.get('prices', []))
+                if len(prices) > 0:
+                    highs = np.array(market_data.get('highs', prices))
+                    lows = np.array(market_data.get('lows', prices))
+                    opens = np.array(market_data.get('opens', prices))
+                    closes = np.array(market_data.get('closes', prices))
+                    volumes = np.array(market_data.get('volumes', np.ones(len(prices))), dtype=np.int32)
+                    
+                    scores_array = backend.compute_hamiltonian_fast(
+                        prices, highs, lows, opens, closes, volumes
+                    )
+                    
+                    if scores_array is not None and len(scores_array) == 18:
+                        return {
+                            name: float(scores_array[i])
+                            for i, name in enumerate(self.operators.keys())
+                        }
+            except Exception:
+                pass
+        
+        # Standard computation (fallback)
         return {name: op.apply(market_data, state) for name, op in self.operators.items()}
     
     def get_registry_metadata(self) -> Dict:

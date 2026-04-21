@@ -3,7 +3,9 @@ import os
 
 # Get API key from environment variable (recommended for security)
 # Set it with: $env:NVAPI_KEY="your-api-key" in PowerShell
-api_key = os.environ.get("NVAPI_KEY") or "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"
+api_key = os.environ.get("NVAPI_KEY")
+if not api_key:
+    raise ValueError("Set NVAPI_KEY environment variable with your NVIDIA API key")
 
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",

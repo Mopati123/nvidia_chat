@@ -204,7 +204,7 @@ class ApexEngine:
             score = 0.0
             # Weight by scheduler operator weights
             for op_name, weight in token.operator_weights.items():
-                score += weight * traj.get(f"{op_name}_score", 0.0)
+                score += weight * traj.get(op_name, traj.get(f"{op_name}_score", 0.0))
             score += traj.get("action_score", 0.0) * 2.0  # Action weighted heavily
             
             if score > best_score:
