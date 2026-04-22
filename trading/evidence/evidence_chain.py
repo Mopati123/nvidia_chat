@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import time
+import uuid
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from datetime import datetime
@@ -161,11 +162,62 @@ class Ed25519Signer:
                 priv = load_pem_private_key(f.read(), password=None)
             return priv, priv.public_key()
 
-        # Priority 4: generate ephemeral (dev only)
+        # Priority 4: auto-provision persistent local key file
+        key_dir = os.path.dirname(key_file)
+        os.makedirs(key_dir, exist_ok=True)
+        generated_pem = self.generate_key_pem()
+        with open(key_file, "wb") as f:
+            f.write(generated_pem)
+        # #region agent log
+        try:
+            with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+                _dbg.write(json.dumps({
+                    "sessionId": "3c812d",
+                    "runId": "post-fix",
+                    "hypothesisId": "H9",
+                    "id": f"log_{uuid.uuid4().hex}",
+                    "location": "trading/evidence/evidence_chain.py:Ed25519Signer._load_or_create",
+                    "message": "persistent_signing_key_created",
+                    "data": {"key_file": key_file},
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        with open(key_file, "rb") as f:
+            priv = load_pem_private_key(f.read(), password=None)
+        return priv, priv.public_key()
+
+        # Priority 5: generate ephemeral (dev only)
+        # #region agent log
+        try:
+            with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+                _dbg.write(json.dumps({
+                    "sessionId": "3c812d",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H6",
+                    "id": f"log_{uuid.uuid4().hex}",
+                    "location": "trading/evidence/evidence_chain.py:Ed25519Signer._load_or_create",
+                    "message": "ephemeral_signing_key_fallback",
+                    "data": {
+                        "env_key_present": bool(env_pem),
+                        "key_file_exists": os.path.exists(key_file)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        allow_ephemeral = os.getenv("APEX_ALLOW_EPHEMERAL_SIGNING", "").lower() in {"1", "true", "yes"}
+        if not allow_ephemeral:
+            raise RuntimeError(
+                "Persistent signing key required: set APEX_SIGNING_KEY or create trading/keys/signing_key.pem. "
+                "For local-only testing, set APEX_ALLOW_EPHEMERAL_SIGNING=1."
+            )
         import warnings
         warnings.warn(
             "APEX_SIGNING_KEY not set and no key file found. "
-            "Generating ephemeral Ed25519 key — signatures will NOT persist across restarts. "
+            "Generating ephemeral Ed25519 key - signatures will NOT persist across restarts. "
             "Set APEX_SIGNING_KEY env var or place key at trading/keys/signing_key.pem.",
             RuntimeWarning, stacklevel=3
         )

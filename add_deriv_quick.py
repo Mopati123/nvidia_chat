@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Quick script to add Deriv credentials"""
+"""Quick script to add Deriv credentials from environment variables."""
 import sys
+import os
 sys.path.insert(0, '.')
 
 from trading.brokers.credentials import get_credential_manager
 
-# Token from user
-TOKEN = "kmphSqW2CMJ3wli"
+TOKEN = os.environ.get("DERIV_API_TOKEN", "").strip()
+MASTER_PASSWORD = os.environ.get("APEX_CREDENTIAL_PASSWORD", "").strip()
 
-print("🔐 Storing Deriv credentials...")
+print("[INFO] Storing Deriv credentials...")
 print("-" * 50)
 
-# Get manager with default password
-m = get_credential_manager('apex_secure_2024')
+if not TOKEN:
+    print("[ERROR] DERIV_API_TOKEN is not set")
+    sys.exit(1)
+if not MASTER_PASSWORD:
+    print("[ERROR] APEX_CREDENTIAL_PASSWORD is not set")
+    sys.exit(1)
+
+m = get_credential_manager(MASTER_PASSWORD)
 
 # Store credential
 success = m.store_credential(
@@ -24,15 +31,15 @@ success = m.store_credential(
 )
 
 if success:
-    print("✅ Deriv DEMO credentials stored successfully!")
+    print("[OK] Deriv DEMO credentials stored successfully!")
     
     # Verify
     cred = m.get_credential('deriv', 'demo')
     print(f"\n   Account: {cred.name}")
     print(f"   Type: {'🧪 DEMO' if cred.is_demo else '💰 LIVE'}")
     print(f"   Token: ***{cred.credentials['token'][-4:]}")
-    print("\n🎉 Ready to test connection!")
+    print("\n[OK] Ready to test connection!")
     print("   Run: python setup_credentials.py test deriv demo")
 else:
-    print("❌ Failed to store credentials")
+    print("[ERROR] Failed to store credentials")
     sys.exit(1)

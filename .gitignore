@@ -58,3 +58,14 @@ data/
 *credentials*
 *password*
 !setup_credentials.py
+
+# Private keys — never commit
+*.pem
+*.key
+trading/keys/
+
+# Runtime state snapshots
+trading_data/state/snapshots/
+
+# Local Claude settings
+.claude/settings.local.json

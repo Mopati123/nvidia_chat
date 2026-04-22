@@ -8,6 +8,8 @@ import os
 import json
 import time
 import logging
+import numpy as np
+from collections import deque
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, date
@@ -79,9 +81,12 @@ class DailyPnLTracker:
         self.total_trades_all_time = 0
         self.total_pnl_all_time = 0.0
         
+        # Rolling execution error histogram (last 100 trades)
+        self.execution_errors: deque = deque(maxlen=100)
+
         # Risk manager reference
         self.risk_manager = get_risk_manager()
-        
+
         # Load persisted state
         self._load_state()
         
@@ -162,6 +167,23 @@ class DailyPnLTracker:
         except Exception as e:
             logger.error(f"Failed to save state: {e}")
     
+    def record_execution_error(self, predicted_pnl: float, realized_pnl: float):
+        """Record execution error ratio into the rolling histogram."""
+        ratio = abs(predicted_pnl - realized_pnl) / max(abs(predicted_pnl), 1.0)
+        self.execution_errors.append(ratio)
+
+    def get_divergence_stats(self) -> Dict:
+        """Return mean/std/p95 of the rolling execution error histogram."""
+        if not self.execution_errors:
+            return {'mean': 0.0, 'std': 0.0, 'p95': 0.0, 'count': 0}
+        arr = np.array(self.execution_errors)
+        return {
+            'mean': float(arr.mean()),
+            'std': float(arr.std()),
+            'p95': float(np.percentile(arr, 95)),
+            'count': len(arr)
+        }
+
     def _check_daily_reset(self):
         """Check and perform daily reset if needed"""
         current_date = datetime.now(timezone.utc).date()

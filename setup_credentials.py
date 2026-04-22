@@ -13,11 +13,41 @@ Usage:
 import os
 import sys
 import argparse
+import json
+import time
+import locale
+import uuid
 from getpass import getpass
 from typing import Optional
 
 # Add project to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# #region agent log
+try:
+    with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+        _dbg.write(json.dumps({
+            "sessionId": "3c812d",
+            "runId": "pre-fix",
+            "hypothesisId": "H11",
+            "id": f"log_{uuid.uuid4().hex}",
+            "location": "setup_credentials.py:module_init",
+            "message": "console_encoding_configured",
+            "data": {
+                "stdout_encoding": getattr(sys.stdout, "encoding", None),
+                "stderr_encoding": getattr(sys.stderr, "encoding", None),
+                "preferred_encoding": locale.getpreferredencoding(False)
+            },
+            "timestamp": int(time.time() * 1000)
+        }) + "\n")
+except Exception:
+    pass
+# #endregion
 
 from trading.brokers.credentials import get_credential_manager, CredentialManager
 

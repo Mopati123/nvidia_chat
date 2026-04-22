@@ -8,6 +8,7 @@ import json
 import time
 import hmac
 import hashlib
+import uuid
 import logging
 from typing import Dict, Optional, Callable
 from dataclasses import dataclass
@@ -81,9 +82,11 @@ class TradingViewConnector:
         api_key: Optional[str] = None,
         webhook_port: int = 8080,
         rate_limit: float = 5.0,  # seconds between signals
-        max_queue_size: int = 100
+        max_queue_size: int = 100,
+        allow_unsigned_webhooks: bool = False
     ):
         self.api_key = api_key or os.getenv('TV_API_KEY', '')
+        self.allow_unsigned_webhooks = allow_unsigned_webhooks
         self.webhook_port = webhook_port
         self.rate_limit = rate_limit
         self.signal_queue: deque = deque(maxlen=max_queue_size)
@@ -131,8 +134,43 @@ class TradingViewConnector:
     
     def _verify_signature(self, data: str, signature: Optional[str]) -> bool:
         """Verify HMAC signature"""
+        # #region agent log
+        try:
+            with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+                _dbg.write(json.dumps({
+                    "sessionId": "3c812d",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H1",
+                    "id": f"log_{uuid.uuid4().hex}",
+                    "location": "trading/brokers/tradingview_connector.py:_verify_signature",
+                    "message": "verify_signature_entry",
+                    "data": {
+                        "has_api_key": bool(self.api_key),
+                        "has_signature": bool(signature)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
         if not self.api_key:
-            return True  # No auth configured
+            # #region agent log
+            try:
+                with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+                    _dbg.write(json.dumps({
+                        "sessionId": "3c812d",
+                        "runId": "pre-fix",
+                        "hypothesisId": "H1",
+                        "id": f"log_{uuid.uuid4().hex}",
+                        "location": "trading/brokers/tradingview_connector.py:_verify_signature",
+                        "message": "missing_api_key_branch",
+                        "data": {"allow_unsigned_webhooks": self.allow_unsigned_webhooks},
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            return self.allow_unsigned_webhooks
         if not signature:
             return False
         

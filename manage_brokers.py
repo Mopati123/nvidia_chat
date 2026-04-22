@@ -18,17 +18,54 @@ Usage:
 """
 
 import sys
+import os
 import getpass
 import argparse
+import json
+import time
+import locale
+import uuid
 from typing import Optional
 
 sys.path.insert(0, '.')
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# #region agent log
+try:
+    with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+        _dbg.write(json.dumps({
+            "sessionId": "3c812d",
+            "runId": "pre-fix",
+            "hypothesisId": "H10",
+            "id": f"log_{uuid.uuid4().hex}",
+            "location": "manage_brokers.py:module_init",
+            "message": "console_encoding_configured",
+            "data": {
+                "stdout_encoding": getattr(sys.stdout, "encoding", None),
+                "stderr_encoding": getattr(sys.stderr, "encoding", None),
+                "preferred_encoding": locale.getpreferredencoding(False)
+            },
+            "timestamp": int(time.time() * 1000)
+        }) + "\n")
+except Exception:
+    pass
+# #endregion
 
 from trading.brokers.credentials import get_credential_manager, BrokerCredential
 from trading.brokers.deriv_broker import DerivBroker
 from trading.brokers.mt5_broker import MT5Broker
 
-MASTER_PASSWORD = "apex_secure_2024"
+
+def get_master_password() -> str:
+    """Get credential password from env or prompt interactively."""
+    password = os.environ.get("APEX_CREDENTIAL_PASSWORD")
+    if password:
+        return password
+    return getpass.getpass("APEX_CREDENTIAL_PASSWORD: ").strip()
 
 
 def cmd_list():
@@ -37,7 +74,7 @@ def cmd_list():
     print("📋 STORED BROKER ACCOUNTS")
     print("=" * 70)
     
-    manager = get_credential_manager(MASTER_PASSWORD)
+    manager = get_credential_manager(get_master_password())
     accounts = manager.list_stored_accounts()
     
     if not accounts:
@@ -71,7 +108,7 @@ def cmd_test_deriv(name: str = "demo"):
     print(f"🧪 TESTING DERIV CONNECTION: {name}")
     print("=" * 70)
     
-    manager = get_credential_manager(MASTER_PASSWORD)
+    manager = get_credential_manager(get_master_password())
     cred = manager.get_credential("deriv", name)
     
     if not cred:
@@ -102,7 +139,7 @@ def cmd_test_mt5(name: str = "default"):
     print(f"🧪 TESTING MT5 CONNECTION: {name}")
     print("=" * 70)
     
-    manager = get_credential_manager(MASTER_PASSWORD)
+    manager = get_credential_manager(get_master_password())
     cred = manager.get_credential("mt5", name)
     
     if not cred:
@@ -155,7 +192,7 @@ def cmd_add_deriv():
     
     print(f"\n🔐 Storing credentials...")
     
-    manager = get_credential_manager(MASTER_PASSWORD)
+    manager = get_credential_manager(get_master_password())
     success = manager.store_credential(
         broker_type="deriv",
         name=name,
@@ -193,7 +230,7 @@ def cmd_add_mt5():
     
     print(f"\n🔐 Storing credentials...")
     
-    manager = get_credential_manager(MASTER_PASSWORD)
+    manager = get_credential_manager(get_master_password())
     success = manager.store_credential(
         broker_type="mt5",
         name=name,
@@ -221,7 +258,7 @@ def cmd_remove(broker_type: str, name: str):
     print(f"🗑️  REMOVE {broker_type.upper()} ACCOUNT: {name}")
     print("=" * 70)
     
-    manager = get_credential_manager(MASTER_PASSWORD)
+    manager = get_credential_manager(get_master_password())
     cred = manager.get_credential(broker_type, name)
     
     if not cred:

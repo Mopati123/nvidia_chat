@@ -7,9 +7,38 @@ import sys
 import os
 import subprocess
 import time
+import json
+import locale
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, '.')
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# #region agent log
+try:
+    with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+        _dbg.write(json.dumps({
+            "sessionId": "3c812d",
+            "runId": "pre-fix",
+            "hypothesisId": "H12",
+            "id": f"log_{uuid.uuid4().hex}",
+            "location": "launch_mt5_auto.py:module_init",
+            "message": "console_encoding_configured",
+            "data": {
+                "stdout_encoding": getattr(sys.stdout, "encoding", None),
+                "stderr_encoding": getattr(sys.stderr, "encoding", None),
+                "preferred_encoding": locale.getpreferredencoding(False)
+            },
+            "timestamp": int(time.time() * 1000)
+        }) + "\n")
+except Exception:
+    pass
+# #endregion
 
 def find_mt5_terminal():
     """Find MT5 terminal64.exe installation"""
@@ -42,7 +71,12 @@ def main():
     # Load credentials
     try:
         from trading.brokers.credentials import get_credential_manager
-        manager = get_credential_manager('apex_secure_2024')
+        password = os.environ.get("APEX_CREDENTIAL_PASSWORD")
+        if not password:
+            print("❌ APEX_CREDENTIAL_PASSWORD is not set")
+            print("   Set it in your environment before launching MT5")
+            sys.exit(1)
+        manager = get_credential_manager(password)
         cred = manager.get_credential('mt5', 'default')
         
         if not cred:

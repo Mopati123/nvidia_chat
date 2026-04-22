@@ -8,6 +8,7 @@ gunicorn>=20.0.0
 yfinance>=0.2.0
 MetaTrader5>=5.0.0
 websocket-client>=1.0.0
+websockets==10.3
 
 # Fallback
 pandas>=1.5.0

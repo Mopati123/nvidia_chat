@@ -3,6 +3,8 @@ import os
 import asyncio
 import logging
 import json
+import time
+import uuid
 from collections import defaultdict
 from datetime import datetime
 from telegram import Update
@@ -28,6 +30,31 @@ except ImportError as e:
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_broker_manager():
+    """Load credential manager from environment-configured password only."""
+    from trading.brokers.credentials import get_credential_manager
+    password = os.environ.get("APEX_CREDENTIAL_PASSWORD")
+    # #region agent log
+    try:
+        with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+            _dbg.write(json.dumps({
+                "sessionId": "3c812d",
+                "runId": "post-fix",
+                "hypothesisId": "H5",
+                "id": f"log_{uuid.uuid4().hex}",
+                "location": "telegram_bot_full.py:get_broker_manager",
+                "message": "broker_manager_env_check",
+                "data": {"env_password_present": bool(password)},
+                "timestamp": int(time.time() * 1000)
+            }) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    if not password:
+        raise ValueError("Set APEX_CREDENTIAL_PASSWORD environment variable for broker commands")
+    return get_credential_manager(password)
 
 # NVIDIA API setup
 api_key = os.environ.get("NVAPI_KEY")
@@ -549,9 +576,7 @@ async def broker_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action="typing")
     
     try:
-        from trading.brokers.credentials import get_credential_manager
-        
-        manager = get_credential_manager("apex_secure_2024")
+        manager = get_broker_manager()
         accounts = manager.list_stored_accounts()
         
         if not accounts:
@@ -608,9 +633,7 @@ async def broker_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action="typing")
     
     try:
-        from trading.brokers.credentials import get_credential_manager
-        
-        manager = get_credential_manager("apex_secure_2024")
+        manager = get_broker_manager()
         
         if broker_type == 'deriv':
             cred = manager.get_credential('deriv', 'demo')
@@ -679,10 +702,8 @@ async def broker_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action="typing")
     
     try:
-        from trading.brokers.credentials import get_credential_manager
         from trading.brokers.deriv_broker import DerivBroker
-        
-        manager = get_credential_manager("apex_secure_2024")
+        manager = get_broker_manager()
         accounts = manager.list_stored_accounts()
         
         if not accounts:

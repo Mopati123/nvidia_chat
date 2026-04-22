@@ -153,13 +153,29 @@ class PipelineOrchestrator:
             risk_manager = ProductionRiskManager()
         self.risk_manager = risk_manager
 
+        # Circuit breaker — auto-kill after 10 consecutive collapse failures
+        from ..resilience.circuit_breaker import get_circuit_breaker, CircuitBreakerConfig
+        from collections import deque
+        cb_config = CircuitBreakerConfig(
+            failure_threshold=10,
+            success_threshold=3,
+            timeout_seconds=30.0
+        )
+        self.collapse_breaker = get_circuit_breaker("scheduler_collapse", cb_config)
+        self.collapse_breaker.register_on_open(
+            lambda: self.risk_manager.trigger_kill_switch("circuit_breaker_open")
+        )
+
+        # Rolling PnL divergence histogram (last 100 executions)
+        self.divergence_history: deque = deque(maxlen=100)
+
         # Operator registry — used by trajectory generator for per-path ICT scoring
         try:
             from ..operators.operator_registry import OperatorRegistry
             self.operator_registry = OperatorRegistry()
         except Exception:
             self.operator_registry = None
-        
+
         # Stage handlers
         self.stage_handlers: Dict[PipelineStage, Callable] = {
             PipelineStage.DATA_INGESTION: self._stage_data_ingestion,
@@ -715,7 +731,8 @@ class PipelineOrchestrator:
 
         delta_s = context.action_scores.get('delta_s', 0.3)
 
-        decision, token = self.scheduler.authorize_collapse(
+        ok, result = self.collapse_breaker.call(
+            self.scheduler.authorize_collapse,
             proposal=context.proposal,
             projected_trajectories=projected,
             delta_s=delta_s,
@@ -723,6 +740,12 @@ class PipelineOrchestrator:
             reconciliation_clear=True
         )
 
+        if not ok:
+            context.collapse_decision = 'REFUSED'
+            logger.error(f"Stage 15: collapse rejected by circuit breaker — {result}")
+            return {'decision': 'REFUSED', 'authorized': False, 'reason': 'circuit_breaker_open'}
+
+        decision, token = result
         context.collapse_decision = decision.name
 
         return {
@@ -752,21 +775,47 @@ class PipelineOrchestrator:
             context.reconciliation_status = 'no_execution'
             return {'status': 'no_execution'}
         
-        # Mock reconciliation - would compare with broker data
+        # Price divergence — compare entry prices
         predicted = context.proposal['entry']
         actual = context.execution_result['entry_price']
-        divergence = abs(predicted - actual)
-        
-        if divergence < 0.0001:  # 1 pip
+        price_divergence = abs(predicted - actual)
+
+        if price_divergence < 0.0001:  # 1 pip
             status = 'match'
-        elif divergence < 0.0005:  # 5 pips
+        elif price_divergence < 0.0005:  # 5 pips
             status = 'mismatch'
         else:
             status = 'rollback'
-        
+
         context.reconciliation_status = status
-        
-        return {'status': status, 'divergence': divergence}
+
+        # PnL divergence — flag if predicted vs realized PnL exceeds 15%
+        predicted_pnl = context.proposal.get('predicted_pnl', 0.0)
+        realized_pnl = context.execution_result.get('realized_pnl', predicted_pnl)
+        pnl_divergence = abs(predicted_pnl - realized_pnl) / max(abs(predicted_pnl), 1.0)
+        self.divergence_history.append(pnl_divergence)
+
+        divergence_flagged = pnl_divergence > 0.15
+        if divergence_flagged:
+            logger.warning(
+                f"Stage 17: PnL divergence {pnl_divergence:.1%} > 15% "
+                f"(predicted={predicted_pnl:.2f}, realized={realized_pnl:.2f})"
+            )
+            self.scheduler.update_action_weights(
+                pnl=-pnl_divergence * 10,
+                delta_s=0.3,
+                status='mismatch',
+                contrib={'L': 25, 'T': 25, 'E': 25, 'R': 25},
+                constraints_passed=False,
+                evidence_complete=False
+            )
+
+        return {
+            'status': status,
+            'divergence': price_divergence,
+            'pnl_divergence': pnl_divergence,
+            'divergence_flagged': divergence_flagged
+        }
     
     def _stage_evidence_emission(self, context: PipelineContext) -> Dict:
         """Stage 17: Emit cryptographic evidence"""
