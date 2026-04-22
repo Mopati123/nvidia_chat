@@ -6,11 +6,20 @@ Deterministic, reproducible, non-repudiable
 """
 
 import hashlib
+import hmac
 import json
+import os
 import time
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from datetime import datetime
+
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.serialization import (
+    Encoding, PrivateFormat, PublicFormat, NoEncryption,
+    load_pem_private_key
+)
+from cryptography.exceptions import InvalidSignature
 
 
 @dataclass
@@ -117,39 +126,70 @@ class MerkleTree:
 
 class Ed25519Signer:
     """
-    Ed25519 signature on evidence bundles.
-    Simplified implementation (production: use cryptography library)
+    Real Ed25519 signature on evidence bundles.
+
+    Key loading priority:
+    1. APEX_SIGNING_KEY env var (PEM string)
+    2. trading/keys/signing_key.pem file
+    3. Generate ephemeral key (development only — warns loudly)
     """
-    
-    def __init__(self, private_key: Optional[str] = None):
-        # Simplified: use SHA-256 based deterministic signing
-        # Production: use actual Ed25519 from cryptography library
-        self.private_key = private_key or self._generate_key()
-        self.public_key = self._derive_public()
-    
-    def _generate_key(self) -> str:
-        """Generate deterministic key (simplified)"""
-        return hashlib.sha256(b"apex_quantum_key").hexdigest()
-    
-    def _derive_public(self) -> str:
-        """Derive public key (simplified)"""
-        return hashlib.sha256(self.private_key.encode()).hexdigest()
-    
+
+    _KEY_FILE = os.path.join(os.path.dirname(__file__), "..", "keys", "signing_key.pem")
+
+    def __init__(self, private_key_pem: Optional[bytes] = None):
+        self._private_key, self._public_key = self._load_or_create(private_key_pem)
+        self.public_key_hex = self._public_key.public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        ).hex()
+
+    def _load_or_create(self, pem_override: Optional[bytes]):
+        # Priority 1: explicit override
+        if pem_override:
+            priv = load_pem_private_key(pem_override, password=None)
+            return priv, priv.public_key()
+
+        # Priority 2: environment variable
+        env_pem = os.getenv("APEX_SIGNING_KEY")
+        if env_pem:
+            priv = load_pem_private_key(env_pem.encode(), password=None)
+            return priv, priv.public_key()
+
+        # Priority 3: key file
+        key_file = os.path.normpath(self._KEY_FILE)
+        if os.path.exists(key_file):
+            with open(key_file, "rb") as f:
+                priv = load_pem_private_key(f.read(), password=None)
+            return priv, priv.public_key()
+
+        # Priority 4: generate ephemeral (dev only)
+        import warnings
+        warnings.warn(
+            "APEX_SIGNING_KEY not set and no key file found. "
+            "Generating ephemeral Ed25519 key — signatures will NOT persist across restarts. "
+            "Set APEX_SIGNING_KEY env var or place key at trading/keys/signing_key.pem.",
+            RuntimeWarning, stacklevel=3
+        )
+        priv = ed25519.Ed25519PrivateKey.generate()
+        return priv, priv.public_key()
+
     def sign(self, message: str) -> str:
-        """
-        Sign message with Ed25519-like deterministic signature.
-        Returns hex signature.
-        """
-        # Simplified Ed25519 signing
-        # Actual implementation: use cryptography.hazmat.primitives.asymmetric.ed25519
-        data = self.private_key + message
-        signature = hashlib.sha256(data.encode()).hexdigest()
-        return signature
-    
-    def verify(self, message: str, signature: str) -> bool:
-        """Verify signature"""
-        expected = self.sign(message)
-        return signature == expected
+        """Sign message with real Ed25519. Returns 128-char hex signature."""
+        return self._private_key.sign(message.encode()).hex()
+
+    def verify(self, message: str, signature_hex: str) -> bool:
+        """Constant-time verification of Ed25519 signature."""
+        try:
+            sig_bytes = bytes.fromhex(signature_hex)
+            self._public_key.verify(sig_bytes, message.encode())
+            return True
+        except (InvalidSignature, ValueError):
+            return False
+
+    @staticmethod
+    def generate_key_pem() -> bytes:
+        """Generate a new Ed25519 private key in PEM format. Store securely."""
+        priv = ed25519.Ed25519PrivateKey.generate()
+        return priv.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
 
 
 class TachyonicAnchor:

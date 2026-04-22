@@ -29,6 +29,25 @@ class ExecutionOutcome(Enum):
     ERROR = "error"
 
 
+class EngineState(Enum):
+    """Explicit state machine for canonical execution cycle.
+
+    Valid transitions (linear):
+      IDLE → CONSTRAINED → COLLAPSED → EXECUTING → RECONCILED → EVIDENCED → IDLE
+    Any skip is an InvalidTransition and blocks execution.
+    """
+    IDLE = "idle"
+    CONSTRAINED = "constrained"   # Constraint projectors evaluated
+    COLLAPSED = "collapsed"        # Scheduler authorized collapse
+    EXECUTING = "executing"        # Broker call in progress
+    RECONCILED = "reconciled"      # Post-collapse reconciliation done
+    EVIDENCED = "evidenced"        # Cryptographic evidence emitted
+
+
+class InvalidTransition(RuntimeError):
+    """Raised when engine state machine detects an illegal transition."""
+
+
 @dataclass
 class ExecutionResult:
     """Result of canonical execution cycle"""
@@ -46,9 +65,12 @@ class ApexEngine:
     Master orchestrator for the ApexQuantumICT system.
     Implements the canonical 7-step transition cycle:
     Proposal → Projection → ΔS → Collapse auth → State update → Reconciliation → Evidence
+
+    State machine: IDLE → CONSTRAINED → COLLAPSED → EXECUTING → RECONCILED → EVIDENCED → IDLE
+    Every transition is validated; skipping states raises InvalidTransition.
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
                  scheduler: Optional[Scheduler] = None,
                  constraints: Optional[ConstraintHamiltonian] = None):
         self.scheduler = scheduler or Scheduler()
@@ -56,33 +78,50 @@ class ApexEngine:
         self.execution_history: List[ExecutionResult] = []
         self.current_state: Dict[str, Any] = {}
         self.mode = ExecutionMode.SHADOW  # Default to shadow
-        
+        self._engine_state = EngineState.IDLE
+
+    def _transition(self, expected: EngineState, next_state: EngineState):
+        """Assert current state equals expected, then advance to next_state."""
+        if self._engine_state != expected:
+            raise InvalidTransition(
+                f"Illegal state transition: expected {expected.value}, "
+                f"current {self._engine_state.value} -> {next_state.value}"
+            )
+        self._engine_state = next_state
+
     def execute_canonical_cycle(self,
-                               proposal: Dict,
-                               market_state: Dict,
-                               path_integral_result: Dict,
-                               mode: ExecutionMode = ExecutionMode.SHADOW) -> ExecutionResult:
+                                proposal: Dict,
+                                market_state: Dict,
+                                path_integral_result: Dict,
+                                mode: ExecutionMode = ExecutionMode.SHADOW) -> ExecutionResult:
         """
         Execute full canonical transition cycle.
-        
+
         1. Proposal - generate candidate trajectories (input)
-        2. Projection - constraint admissibility gate
+        2. Projection - ALL 5 constraint projectors evaluated individually
         3. ΔS measurement - entropy change assessment
         4. Scheduler-authorized collapse
-        5. State update - wavefunction collapse
+        5. State update - wavefunction collapse (gated on COLLAPSED state)
         6. Reconciliation - post-collapse verification
         7. Evidence - cryptographic audit emission
         """
+        self._transition(EngineState.IDLE, EngineState.IDLE)  # validate starting state
         start_time = time.time()
         self.mode = mode
-        
+
         trajectories = path_integral_result.get("trajectories", [])
-        
-        # Step 2: Projection - apply constraint projectors
-        admissible = self.constraints.apply_constraints(trajectories, market_state)
-        
-        if not admissible:
-            # Refusal-first: evidenced refusal as first-class output
+
+        # Step 2: Projection — evaluate all 5 constraint projectors individually
+        projector_results = self.constraints.evaluate_projectors(trajectories, market_state)
+        admissible = projector_results.get("admissible_trajectories", [])
+        all_projectors_passed = projector_results.get("all_passed", False)
+
+        self._engine_state = EngineState.CONSTRAINED
+
+        if not admissible or not all_projectors_passed:
+            failed = [k for k, v in projector_results.items()
+                      if k not in ("admissible_trajectories", "all_passed") and not v]
+            self._engine_state = EngineState.IDLE
             result = ExecutionResult(
                 outcome=ExecutionOutcome.REFUSED,
                 token=None,
@@ -90,26 +129,27 @@ class ApexEngine:
                 evidence_hash=self._compute_refusal_hash(proposal),
                 execution_time_ms=(time.time() - start_time) * 1000,
                 mode=mode,
-                refusal_reason="All trajectories failed constraint projection"
+                refusal_reason=f"Constraint projectors failed: {failed}"
             )
             self.execution_history.append(result)
             return result
-        
-        # Step 3: ΔS measurement - entropy change
+
+        # Step 3: ΔS measurement
         delta_s = self._measure_entropy_change(admissible, market_state)
-        
+
         # Step 4: Scheduler-authorized collapse
         reconciliation_clear = self._check_reconciliation(market_state)
-        
+
         decision, token = self.scheduler.authorize_collapse(
             proposal=proposal,
             projected_trajectories=admissible,
             delta_s=delta_s,
-            constraints_passed=not self.constraints.has_fatal_violations(),
+            constraints_passed=all_projectors_passed,
             reconciliation_clear=reconciliation_clear
         )
-        
+
         if decision == CollapseDecision.REFUSED:
+            self._engine_state = EngineState.IDLE
             result = ExecutionResult(
                 outcome=ExecutionOutcome.REFUSED,
                 token=None,
@@ -121,8 +161,9 @@ class ApexEngine:
             )
             self.execution_history.append(result)
             return result
-        
+
         if decision == CollapseDecision.DEFERRED:
+            self._engine_state = EngineState.IDLE
             result = ExecutionResult(
                 outcome=ExecutionOutcome.DEFERRED,
                 token=None,
@@ -134,23 +175,44 @@ class ApexEngine:
             )
             self.execution_history.append(result)
             return result
-        
-        # Step 5: State update - execute collapse
+
+        # Advance to COLLAPSED — token is now valid
+        self._transition(EngineState.CONSTRAINED, EngineState.COLLAPSED)
+
+        # Validate token before using it
+        if token is None or not token.is_valid():
+            self._engine_state = EngineState.IDLE
+            result = ExecutionResult(
+                outcome=ExecutionOutcome.REFUSED,
+                token=None,
+                trajectory=None,
+                evidence_hash=self._compute_refusal_hash(proposal),
+                execution_time_ms=(time.time() - start_time) * 1000,
+                mode=mode,
+                refusal_reason="Invalid ExecutionToken after scheduler collapse"
+            )
+            self.execution_history.append(result)
+            return result
+
+        # Step 5: State update — gated on COLLAPSED state
         selected_traj = self._select_best_trajectory(admissible, token)
-        
+        self._transition(EngineState.COLLAPSED, EngineState.EXECUTING)
+
         if mode == ExecutionMode.LIVE:
             self._execute_live(selected_traj, market_state)
         else:
             self._execute_shadow(selected_traj, market_state)
-        
+
         # Step 6: Reconciliation
+        self._transition(EngineState.EXECUTING, EngineState.RECONCILED)
         reconciliation_ok = self._reconcile_execution(selected_traj, market_state)
-        
+
         # Step 7: Evidence emission
+        self._transition(EngineState.RECONCILED, EngineState.EVIDENCED)
         evidence_hash = self._emit_evidence(
             proposal, admissible, token, selected_traj, market_state
         )
-        
+
         result = ExecutionResult(
             outcome=ExecutionOutcome.SUCCESS if reconciliation_ok else ExecutionOutcome.ERROR,
             token=token,
@@ -159,10 +221,11 @@ class ApexEngine:
             execution_time_ms=(time.time() - start_time) * 1000,
             mode=mode
         )
-        
+
         self.execution_history.append(result)
         self._update_state(selected_traj, market_state)
-        
+        self._engine_state = EngineState.IDLE  # Reset for next cycle
+
         return result
     
     def _measure_entropy_change(self, 

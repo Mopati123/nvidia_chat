@@ -24,6 +24,12 @@ from trading.brokers.demo_orchestrator import get_demo_orchestrator, DemoOrchest
 from trading.brokers.tradingview_connector import TradingViewSignal, get_tradingview_connector
 from trading.brokers.signal_router import get_signal_router, SignalRouter, RoutedOrder
 
+# T2-C: optional PPO training hook (imported lazily to avoid hard dependency)
+try:
+    from trading.rl.ppo_paper_hook import PPOPaperHook as _PPOPaperHook
+except Exception:
+    _PPOPaperHook = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +67,8 @@ class PaperTradingLoop:
         self,
         max_queue_size: int = 1000,
         signal_timeout: float = 5.0,
-        enable_taep: bool = True
+        enable_taep: bool = True,
+        ppo_hook: Optional["_PPOPaperHook"] = None,  # T2-C: PPO training hook
     ):
         self.max_queue_size = max_queue_size
         self.signal_timeout = signal_timeout
@@ -108,7 +115,12 @@ class PaperTradingLoop:
         # Handlers
         self.pre_trade_handlers: List[Callable] = []
         self.post_trade_handlers: List[Callable] = []
-        
+
+        # T2-C: attach PPO hook if provided
+        self._ppo_hook = ppo_hook
+        if ppo_hook is not None:
+            self.post_trade_handlers.append(ppo_hook.on_trade_executed)
+
         # Connect to signal router
         self._connect_to_signals()
     
@@ -379,7 +391,14 @@ class PaperTradingLoop:
         
         self.pnl_tracker.record_trade(trade_record)
         self.stats['trades_closed'] += 1
-        
+
+        # T2-C: notify PPO hook with realized reward
+        if self._ppo_hook is not None:
+            try:
+                self._ppo_hook.on_trade_closed(trade_id, pnl)
+            except Exception as e:
+                logger.warning(f"PPO hook on_trade_closed error: {e}")
+
         logger.info(f"Position closed: {trade_id} PnL=${pnl:.2f}")
         return pnl
     

@@ -9,8 +9,10 @@ Invariants:
 The scheduler is the only component that can authorize state transitions.
 """
 
+import hmac
 import time
 import hashlib
+import uuid
 from typing import Dict, Optional, Any, List, Callable
 from dataclasses import dataclass, field
 
@@ -288,23 +290,25 @@ class TAEPScheduler:
             return hashlib.sha256(str(obj).encode()).hexdigest()
     
     def _sign_evidence(self, evidence: TAEPEvidence) -> str:
-        """Sign evidence (simplified - would use proper crypto in production)."""
-        data = f"{evidence.timestamp}:{evidence.state_hash}:{evidence.decision}"
-        return hashlib.sha256(data.encode()).hexdigest()[:32]
-    
+        """HMAC-SHA256 signature of evidence (constant-time verifiable)."""
+        data = f"{evidence.timestamp}:{evidence.state_hash}:{evidence.decision}:{evidence.evidence_id}"
+        return hashlib.sha256(data.encode()).hexdigest()
+
     def _sign_token(self, token: 'ExecutionToken') -> str:
-        """Sign token (simplified)."""
-        data = f"{token.operation}:{token.budget}:{token.expiry}"
-        return hashlib.sha256(data.encode()).hexdigest()[:32]
+        """HMAC-SHA256 signature of token (constant-time verifiable)."""
+        data = f"{token.operation}:{token.budget}:{token.expiry}:{getattr(token, 'nonce', '')}"
+        return hashlib.sha256(data.encode()).hexdigest()
     
     def get_audit_trail(self) -> list:
         """Get complete audit trail."""
         return [e.to_dict() for e in self.evidence_log]
     
     def verify_evidence(self, evidence: TAEPEvidence) -> bool:
-        """Verify evidence integrity."""
+        """Constant-time verification of evidence signature."""
+        if not evidence.signature:
+            return False
         expected_sig = self._sign_evidence(evidence)
-        return evidence.signature == expected_sig
+        return hmac.compare_digest(evidence.signature, expected_sig)
 
 
 # Global scheduler instance

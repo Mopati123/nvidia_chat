@@ -10,11 +10,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Tuple, Optional, Dict
-from taep.core.state import TAEPState
-from taep.scheduler.scheduler import TAEPScheduler, TAEPEvidence
-from taep.constraints.admissibility import AdmissibilityChecker
-from trading.pipeline.orchestrator import PipelineOrchestrator, PipelineContext
-from trading.taep_bridge import TradingTAEPBridge
+from trading.core.market_regime_detector import MarketRegimeDetector
+import pandas as pd
 
 
 class TAEPTradingPipeline:
@@ -46,6 +43,9 @@ class TAEPTradingPipeline:
         self.bridge = bridge or TradingTAEPBridge()
         self.admissibility = AdmissibilityChecker()
         self.evidence_log = []
+        
+        # Market regime detection for dynamic adaptation
+        self.regime_detector = MarketRegimeDetector()
     
     def execute_with_taep(
         self,
@@ -57,9 +57,10 @@ class TAEPTradingPipeline:
         Execute full pipeline with TAEP governance.
         
         Flow:
-        1. Build initial TAEP state from market data
-        2. Run pipeline stages under TAEP
-        3. Final authorization and evidence
+        1. Detect market regime and adapt parameters
+        2. Build initial TAEP state from market data
+        3. Run pipeline stages under TAEP with adapted parameters
+        4. Final authorization and evidence
         
         Args:
             raw_data: Raw market data
@@ -69,34 +70,42 @@ class TAEPTradingPipeline:
         Returns:
             (context, final_state, evidence): Full execution result
         """
-        # Build initial TAEP state
+        # Step 1: Detect market regime
+        regime = self._detect_market_regime(raw_data, symbol)
+        adapted_params = self.regime_detector.get_adapted_parameters()
+        
+        # Step 2: Build initial TAEP state
         market_state = self._extract_market_state(raw_data)
         geometry_data = self._extract_geometry(raw_data)
         decision_context = {
             'symbol': symbol,
             'timestamp': raw_data.get('timestamp', time.time()),
             'session': raw_data.get('session', 'london'),
+            'regime': regime.value,
+            'adapted_params': adapted_params.__dict__
         }
         
         taep_state = self.bridge.trading_to_taep(
             market_state, geometry_data, decision_context
         )
         
-        # Run pipeline with TAEP governance
-        context = self.pipeline.execute(raw_data, symbol)
+        # Step 3: Run pipeline with adapted parameters
+        context = self.pipeline.execute(raw_data, symbol, adapted_params=adapted_params)
         
-        # Update TAEP state with pipeline results
+        # Step 4: Update TAEP state with pipeline results
         taep_state = self._update_state_from_pipeline(taep_state, context)
         
-        # Final authorization
+        # Step 5: Final authorization
         proposal = {
             'should_trade': context.collapse_decision == 'AUTHORIZED',
             'action_scores': context.action_scores if hasattr(context, 'action_scores') else {},
+            'regime': regime.value,
+            'confidence': self.regime_detector.confidence
         }
         
         authorized = self.scheduler.authorize(taep_state, proposal)
         
-        # Collapse and emit evidence
+        # Step 6: Collapse and emit evidence
         evidence = self.scheduler.collapse(
             taep_state, authorized, proposal,
             reason=None if authorized else "Pipeline decision refused"
@@ -142,6 +151,25 @@ class TAEPTradingPipeline:
     def get_audit_trail(self) -> list:
         """Get complete audit trail."""
         return [e.to_dict() for e in self.evidence_log]
+
+
+    def _detect_market_regime(self, raw_data: Dict, symbol: str):
+        """Detect current market regime for parameter adaptation"""
+        # Extract OHLCV data for regime detection
+        ohlcv_data = raw_data.get('ohlcv', [])
+        if not ohlcv_data:
+            return self.regime_detector.current_regime
+        
+        # Convert to DataFrame for analysis
+        df = pd.DataFrame(ohlcv_data)
+        required_cols = ['high', 'low', 'close']
+        if not all(col in df.columns for col in required_cols):
+            return self.regime_detector.current_regime
+        
+        # Detect regime
+        regime = self.regime_detector.detect_regime(df, raw_data.get('microstructure'))
+        
+        return regime
 
 
 import time

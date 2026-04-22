@@ -374,249 +374,477 @@ class OperatorRegistry:
         op18.bind_compute(self._compute_projection)
         self.operators["projection"] = op18
     
+    # ============== HELPER METHODS ==============
+
+    def _compute_atr(self, market_data: Dict, period: int = 14) -> float:
+        """Average True Range over last `period` candles."""
+        ohlc = market_data.get("ohlc", [])
+        highs = market_data.get("highs", [])
+        lows = market_data.get("lows", [])
+        closes = market_data.get("closes", []) or market_data.get("prices", [])
+
+        if ohlc and len(ohlc) >= 2:
+            trs = []
+            for i in range(1, min(period + 1, len(ohlc))):
+                c = ohlc[i]
+                prev_close = ohlc[i - 1]["close"]
+                tr = max(c["high"] - c["low"],
+                         abs(c["high"] - prev_close),
+                         abs(c["low"] - prev_close))
+                trs.append(tr)
+            return float(np.mean(trs)) if trs else 1e-6
+
+        if highs and lows and len(highs) >= 2:
+            trs = [highs[i] - lows[i] for i in range(max(0, len(highs) - period), len(highs))]
+            return float(np.mean(trs)) if trs else 1e-6
+
+        return 1e-6  # Degenerate fallback
+
+    def _get_swing_levels(self, market_data: Dict, state: Dict):
+        """Return (swing_high, swing_low) from state or derive from price history."""
+        sh = state.get("swing_high") or state.get("bos_high")
+        sl = state.get("swing_low") or state.get("bos_low")
+        if sh and sl:
+            return float(sh), float(sl)
+        highs = market_data.get("highs", [])
+        lows = market_data.get("lows", [])
+        prices = market_data.get("prices", [])
+        all_h = highs if highs else prices
+        all_l = lows if lows else prices
+        if all_h and all_l:
+            return float(max(all_h[-50:])), float(min(all_l[-50:]))
+        return 0.0, 0.0
+
     # ============== OPERATOR COMPUTATIONS ==============
-    
+
     def _compute_kinetic(self, market_data: Dict, state: Dict) -> float:
-        """T(p;σ): Momentum/velocity operator"""
-        prices = market_data.get("prices", [])
-        if len(prices) < 2:
+        """T(p;σ) = p²/(2m·σ): Kinetic energy from momentum and volatility.
+
+        p = mean absolute return velocity; σ = rolling std of returns (volatility).
+        Score is dimensionless: higher momentum relative to volatility = higher score.
+        """
+        prices = market_data.get("prices", []) or market_data.get("closes", [])
+        if len(prices) < 3:
             return 0.0
-        velocities = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-        return np.mean([abs(v) for v in velocities]) if velocities else 0.0
-    
+        arr = np.array(prices, dtype=float)
+        returns = np.diff(arr) / np.where(arr[:-1] != 0, arr[:-1], 1.0)
+        p = float(np.mean(np.abs(returns[-20:])))
+        sigma = float(np.std(returns[-20:])) if len(returns) >= 2 else 1e-6
+        if sigma < 1e-9:
+            sigma = 1e-6
+        return float(p ** 2 / (2.0 * sigma))
+
     def _compute_liquidity_pool(self, market_data: Dict, state: Dict) -> float:
-        """V_LP(x): Resting liquidity attraction"""
-        volume = market_data.get("volume", [])
-        return np.mean(volume) if volume else 0.0
-    
+        """V_LP(x) = -κ·Σ_i V_i·exp(-|x - x_i|/λ): Volume-weighted attraction field.
+
+        Approximated as: sum of volume×proximity weights for recent candles.
+        High near-price volume = strong attraction = high score.
+        """
+        prices = market_data.get("prices", []) or market_data.get("closes", [])
+        volumes = market_data.get("volume", []) or market_data.get("volumes", [])
+        if not prices or not volumes:
+            return 0.0
+        price = float(prices[-1])
+        kappa = 1.0
+        lam = float(np.std(prices[-20:]) if len(prices) >= 2 else 0.001) or 0.001
+        total = 0.0
+        n = min(len(prices), len(volumes), 20)
+        for i in range(n):
+            x_i = float(prices[-(i + 1)])
+            v_i = float(volumes[-(i + 1)])
+            dist = abs(price - x_i)
+            total += v_i * np.exp(-dist / lam)
+        vol_mean = float(np.mean(volumes[-20:])) if volumes else 1.0
+        return float(kappa * total / max(vol_mean * n, 1.0))
+
     def _compute_order_block(self, market_data: Dict, state: Dict) -> float:
-        """V_OB(x): Institutional order block detection"""
+        """V_OB(x): Institutional order block detection.
+
+        Criteria (ICT exact): candle body > 70% of range AND volume > 2σ above mean.
+        Score = (body/range) × log(vol/vol_mean) — stronger OBs score higher.
+        """
         ohlc = market_data.get("ohlc", [])
-        if not ohlc:
+        volumes = market_data.get("volume", []) or market_data.get("volumes", [])
+        if not ohlc or not volumes:
             return 0.0
-        # Detect imbalance: strong close in one direction
-        scores = []
-        for candle in ohlc[-5:]:  # Last 5 candles
-            body = abs(candle["close"] - candle["open"])
-            range_ = candle["high"] - candle["low"]
-            if range_ > 0:
-                scores.append(body / range_)
-        return np.mean(scores) if scores else 0.0
-    
+        vol_arr = np.array(volumes[-50:], dtype=float)
+        vol_mean = float(np.mean(vol_arr)) or 1.0
+        vol_std = float(np.std(vol_arr)) or vol_mean * 0.5
+        best_score = 0.0
+        n = min(len(ohlc), len(volumes), 10)
+        for i in range(n):
+            c = ohlc[-(i + 1)]
+            v = float(volumes[-(i + 1)])
+            body = abs(c["close"] - c["open"])
+            rng = c["high"] - c["low"]
+            if rng <= 0:
+                continue
+            body_ratio = body / rng
+            if body_ratio > 0.70 and v > vol_mean + 2.0 * vol_std:
+                score = body_ratio * np.log(max(v / vol_mean, 1.0))
+                best_score = max(best_score, score)
+        return float(min(best_score, 5.0))
+
     def _compute_fvg(self, market_data: Dict, state: Dict) -> float:
-        """V_FVG(x): Fair Value Gap detection"""
+        """V_FVG(x): Fair Value Gap — score = gap_size / ATR.
+
+        Bullish FVG: high[i] < low[i+2] (gap up, unmitigated imbalance zone).
+        Bearish FVG: low[i] > high[i+2] (gap down).
+        Score = max gap size normalized by ATR — larger gaps = stronger imbalance.
+        """
         ohlc = market_data.get("ohlc", [])
         if len(ohlc) < 3:
             return 0.0
-        gaps = 0
+        atr = self._compute_atr(market_data) or 1e-6
+        best_gap = 0.0
         for i in range(len(ohlc) - 2):
-            c1, c2, c3 = ohlc[i], ohlc[i+1], ohlc[i+2]
-            # Bullish FVG: c2 low > c1 high and c3 low > c1 high
-            if c2["low"] > c1["high"] and c3["low"] > c1["high"]:
-                gaps += 1
-            # Bearish FVG: c2 high < c1 low and c3 high < c1 low
-            if c2["high"] < c1["low"] and c3["high"] < c1["low"]:
-                gaps += 1
-        return min(gaps * 0.3, 1.0)
-    
+            c1, c3 = ohlc[i], ohlc[i + 2]
+            # Bullish FVG: c1 high < c3 low
+            if c1["high"] < c3["low"]:
+                gap = c3["low"] - c1["high"]
+                best_gap = max(best_gap, gap)
+            # Bearish FVG: c1 low > c3 high
+            elif c1["low"] > c3["high"]:
+                gap = c1["low"] - c3["high"]
+                best_gap = max(best_gap, gap)
+        return float(min(best_gap / atr, 10.0))
+
     def _compute_macro_time(self, market_data: Dict, state: Dict) -> float:
-        """V_macro(t): Session time weighting"""
-        session = market_data.get("session", "neutral")
-        weights = {"london": 1.0, "ny": 1.0, "asia": 0.7, "neutral": 0.5}
-        return weights.get(session, 0.5)
-    
+        """V_macro(t): Session weight × time-decay from session peak.
+
+        Session base weights reflect ICT killzone importance.
+        Decay: exp(-|minutes_from_open| / tau) where tau=30min.
+        """
+        import datetime
+        session = market_data.get("session", "neutral").lower()
+        session_weights = {
+            "london": 1.0, "london_open": 1.0,
+            "ny": 0.95, "new_york": 0.95, "ny_open": 1.0,
+            "asia": 0.60, "tokyo": 0.60,
+            "london_close": 0.70,
+            "neutral": 0.40, "off_hours": 0.20
+        }
+        base_weight = session_weights.get(session, 0.40)
+
+        # Time decay from session open if timestamp provided
+        ts = market_data.get("timestamp")
+        if ts:
+            try:
+                dt = datetime.datetime.utcfromtimestamp(float(ts))
+                hour = dt.hour
+                minute = dt.minute
+                total_min = hour * 60 + minute
+                # Session opens: London=8:00, NY=13:00, Asia=00:00 UTC
+                session_opens = {"london": 480, "ny": 780, "asia": 0}
+                open_min = session_opens.get(session, total_min)
+                delta = abs(total_min - open_min)
+                tau = 60.0  # 1-hour decay constant
+                decay = float(np.exp(-delta / tau))
+                base_weight *= (0.6 + 0.4 * decay)  # Decay from 100% to 60% of base
+            except Exception:
+                pass
+
+        return float(np.clip(base_weight, 0.0, 1.0))
+
     def _compute_price_delivery(self, market_data: Dict, state: Dict) -> float:
-        """V_PD(x): Algorithmic price delivery"""
-        highs = market_data.get("highs", [])
-        lows = market_data.get("lows", [])
-        if not highs or not lows:
+        """V_PD(x): Premium/discount positioning relative to PD array midline.
+
+        Score in [-1, 1]: +1 = deep discount (buy zone), -1 = deep premium (sell zone).
+        PD midline = (swing_high + swing_low) / 2.
+        """
+        price = float(market_data.get("close", 0) or
+                      (market_data.get("prices") or [0])[-1])
+        swing_high, swing_low = self._get_swing_levels(market_data, state)
+        if swing_high == swing_low or swing_high == 0:
             return 0.0
-        range_ = max(highs) - min(lows)
-        recent_range = max(highs[-5:]) - min(lows[-5:]) if len(highs) >= 5 else range_
-        return recent_range / range_ if range_ > 0 else 0.0
-    
+        midline = (swing_high + swing_low) / 2.0
+        rng = swing_high - swing_low
+        # Positive = discount, Negative = premium
+        score = (midline - price) / rng
+        return float(np.clip(score, -1.0, 1.0))
+
     def _compute_regime(self, market_data: Dict, state: Dict) -> float:
-        """V_regime(x,t): Market regime classification"""
-        prices = market_data.get("prices", [])
+        """V_regime(x,t): Regime score from ADX + price structure.
+
+        Returns continuous score: +1.0 (strong uptrend), 0 (ranging), -1.0 (downtrend).
+        Computes ADX-proxy from DMI if raw prices available; uses state regime if provided.
+        """
+        # Check if regime was pre-computed by MarketRegimeDetector
+        regime_label = state.get("regime") or market_data.get("regime")
+        regime_map = {
+            "trending_up": 1.0, "TRENDING_UP": 1.0,
+            "trending_down": -1.0, "TRENDING_DOWN": -1.0,
+            "ranging": 0.0, "RANGING": 0.0,
+            "high_volatility": 0.2, "HIGH_VOLATILITY": 0.2,
+            "low_volatility": 0.0, "LOW_VOLATILITY": 0.0,
+            "crisis": -0.5, "CRISIS": -0.5,
+        }
+        if regime_label and regime_label in regime_map:
+            return regime_map[regime_label]
+
+        # Derive from price structure: BOS/CHOCH indicators
+        prices = market_data.get("prices", []) or market_data.get("closes", [])
         if len(prices) < 20:
-            return 0.5  # Neutral
-        
-        # Simple trend detection
-        short_ma = np.mean(prices[-5:])
-        long_ma = np.mean(prices[-20:])
-        
-        if short_ma > long_ma * 1.02:
-            return 1.0  # Trending up
-        elif short_ma < long_ma * 0.98:
-            return 0.0  # Trending down
-        return 0.5  # Ranging
-    
-    def _compute_session(self, market_data: Dict, state: Dict) -> float:
-        """Π_session: Session legality projector"""
-        session = market_data.get("session", "")
-        allowed = ["london", "ny", "asia"]
-        return 1.0 if session in allowed else 0.0
-    
-    def _compute_risk(self, market_data: Dict, state: Dict) -> float:
-        """Π_risk: Risk limit projector"""
-        proposed_size = state.get("proposed_position_size", 0)
-        max_size = state.get("max_position_size", 100)
-        return 1.0 if proposed_size <= max_size else 0.0
-    
-    def _compute_sailing_lane(self, market_data: Dict, state: Dict) -> float:
-        """L(n) = L₀·α^(n-1): Sailing lane multi-leg execution"""
-        leg = state.get("current_leg", 1)
-        max_legs = state.get("max_legs", 5)
-        alpha = state.get("sailing_alpha", 0.8)
-        L0 = state.get("sailing_L0", 1.0)
-        
-        if leg > max_legs:
             return 0.0
-        
+        arr = np.array(prices, dtype=float)
+        # ADX proxy: normalized directional movement
+        returns = np.diff(arr[-21:])
+        pos_dm = np.sum(returns[returns > 0])
+        neg_dm = np.sum(np.abs(returns[returns < 0]))
+        total_dm = pos_dm + neg_dm
+        if total_dm < 1e-9:
+            return 0.0
+        dx = (pos_dm - neg_dm) / total_dm  # in [-1, 1]
+        return float(dx)
+
+    def _compute_session(self, market_data: Dict, state: Dict) -> float:
+        """Π_session: Session legality projector {0, 1}.
+
+        Allowed sessions from env TRADING_SESSIONS or default: london, ny, asia.
+        """
+        import os
+        session = (market_data.get("session") or "").lower().strip()
+        env_sessions = os.getenv("TRADING_SESSIONS", "london,ny,asia,new_york,tokyo,london_open,ny_open")
+        allowed = {s.strip().lower() for s in env_sessions.split(",")}
+        return 1.0 if session in allowed else 0.0
+
+    def _compute_risk(self, market_data: Dict, state: Dict) -> float:
+        """Π_risk: Risk limit projector {0, 1}.
+
+        Queries live risk_manager if wired; otherwise falls back to state limits.
+        """
+        risk_mgr = state.get("risk_manager")
+        if risk_mgr is not None and hasattr(risk_mgr, "get_max_allowed"):
+            max_allowed = risk_mgr.get_max_allowed()
+        else:
+            max_allowed = float(state.get("max_position_size", 0.1))
+
+        proposed = float(state.get("proposed_position_size",
+                                   state.get("position_size", 0)))
+        return 1.0 if proposed <= max_allowed else 0.0
+
+    # T2-D: regime → sailing-lane decay factor
+    _REGIME_ALPHA: Dict[str, float] = {
+        "TRENDING": 0.85,
+        "RANGING": 0.7,
+        "HIGH_VOL": 0.6,
+        "CRISIS": 0.5,
+    }
+
+    @classmethod
+    def sailing_alpha_from_regime(cls, regime: str) -> float:
+        """Return sailing-lane decay factor α for the given market regime."""
+        return cls._REGIME_ALPHA.get(regime.upper(), 0.8)
+
+    def _compute_sailing_lane(self, market_data: Dict, state: Dict) -> float:
+        """L(n) = L₀·α^(n-1): Sailing lane multi-leg position sizing.
+
+        leg n must be in {1..max_legs}. Returns 0 if leg exceeds max.
+        Alpha can be regime-adapted (T2-D) via state["sailing_alpha"]; defaults to 0.8.
+        """
+        leg = int(state.get("current_leg", 1))
+        max_legs = int(state.get("max_legs", 5))
+        alpha = float(state.get("sailing_alpha", 0.8))
+        L0 = float(state.get("sailing_L0", 1.0))
+
+        if not (1 <= leg <= max_legs):
+            return 0.0
+
         position = L0 * (alpha ** (leg - 1))
-        return position if position > 0.1 else 0.0
-    
+        return float(position) if position > 1e-4 else 0.0
+
     def _compute_sweep(self, market_data: Dict, state: Dict) -> float:
-        """S_liq(x): Liquidity sweep detection"""
+        """S_liq(x): Liquidity sweep — exceeds prior swing AND closes back inside.
+
+        Score = reversal momentum = |close - sweep_level| / ATR.
+        A sweep that closes strongly back inside scores higher.
+        """
         highs = market_data.get("highs", [])
         lows = market_data.get("lows", [])
-        if len(highs) < 5 or len(lows) < 5:
+        closes = market_data.get("closes", []) or market_data.get("prices", [])
+        if len(highs) < 5 or len(lows) < 5 or not closes:
             return 0.0
-        
-        # Check for sweep of recent high/low followed by reversal
-        recent_high = max(highs[-5:-1])
-        recent_low = min(lows[-5:-1])
-        
-        current_high = highs[-1]
-        current_low = lows[-1]
-        
-        # High sweep + close back below
-        if current_high > recent_high and market_data.get("close", 0) < recent_high:
-            return 1.0
-        # Low sweep + close back above
-        if current_low < recent_low and market_data.get("close", 0) > recent_low:
-            return 1.0
+        atr = self._compute_atr(market_data) or 1e-6
+        recent_high = float(max(highs[-6:-1]))
+        recent_low = float(min(lows[-6:-1]))
+        cur_high = float(highs[-1])
+        cur_low = float(lows[-1])
+        close = float(closes[-1])
+
+        # Bearish sweep: wick above prior high, closes back below
+        if cur_high > recent_high and close < recent_high:
+            return float(min((recent_high - close) / atr, 3.0))
+        # Bullish sweep: wick below prior low, closes back above
+        if cur_low < recent_low and close > recent_low:
+            return float(min((close - recent_low) / atr, 3.0))
         return 0.0
-    
+
     def _compute_displacement(self, market_data: Dict, state: Dict) -> float:
-        """D(x,t): Displacement candle detection"""
+        """D(x,t): Displacement — single impulsive candle > 2.5×ATR body.
+
+        Score = body / ATR. Displacement candles leave FVGs and signal order flow.
+        """
         ohlc = market_data.get("ohlc", [])
-        if not ohlc:
+        closes = market_data.get("closes", []) or market_data.get("prices", [])
+        if not ohlc and not closes:
             return 0.0
-        
-        candle = ohlc[-1]
-        body = abs(candle["close"] - candle["open"])
-        range_ = candle["high"] - candle["low"]
-        
-        if range_ == 0:
-            return 0.0
-        
-        body_ratio = body / range_
-        # Large body = displacement
-        return 1.0 if body_ratio > 0.7 else body_ratio
-    
-    def _compute_breaker_block(self, market_data: Dict, state: Dict) -> float:
-        """BB(x): Breaker block (failed order block)"""
-        ohlc = market_data.get("ohlc", [])
-        if len(ohlc) < 3:
-            return 0.0
-        
-        # Simplified: check for mitigation of previous structure
-        c1, c2, c3 = ohlc[-3], ohlc[-2], ohlc[-1]
-        
-        # Bullish breaker: price takes out bearish OB low then reclaims
-        if c1["close"] < c1["open"] and c2["low"] < c1["low"] and c3["close"] > c1["high"]:
-            return 1.0
-        # Bearish breaker
-        if c1["close"] > c1["open"] and c2["high"] > c1["high"] and c3["close"] < c1["low"]:
-            return 1.0
-        return 0.0
-    
-    def _compute_mitigation(self, market_data: Dict, state: Dict) -> float:
-        """MB(x): Mitigation block detection"""
-        price = market_data.get("close", 0)
-        unmitigated_levels = state.get("unmitigated_levels", [])
-        
-        for level in unmitigated_levels:
-            if abs(price - level) / level < 0.005:  # Within 0.5%
-                return 1.0
-        return 0.0
-    
-    def _compute_ote(self, market_data: Dict, state: Dict) -> float:
-        """OTE(x): Optimal Trade Entry (Fibonacci 0.62-0.79)"""
-        swing_high = state.get("swing_high", 0)
-        swing_low = state.get("swing_low", 0)
-        price = market_data.get("close", 0)
-        
-        if swing_high == 0 or swing_low == 0:
-            return 0.0
-        
-        range_ = swing_high - swing_low
-        if range_ == 0:
-            return 0.0
-        
-        # Calculate retracement
-        if state.get("bias") == "bullish":
-            retracement = (swing_high - price) / range_
+        atr = self._compute_atr(market_data) or 1e-6
+
+        if ohlc:
+            c = ohlc[-1]
+            body = abs(c["close"] - c["open"])
         else:
-            retracement = (price - swing_low) / range_
-        
-        # OTE zone: 0.62 - 0.79
+            if len(closes) < 2:
+                return 0.0
+            body = abs(closes[-1] - closes[-2])
+
+        score = body / atr
+        return float(min(score, 5.0)) if score >= 2.5 else float(score * 0.3)
+
+    def _compute_breaker_block(self, market_data: Dict, state: Dict) -> float:
+        """BB(x): Breaker block — former OB that was swept through (BOS).
+
+        After BOS, the prior order block flips polarity: support becomes resistance.
+        Score = 1 / (distance_to_breaker / ATR + epsilon) — proximity-weighted.
+        """
+        price = float(market_data.get("close", 0) or
+                      (market_data.get("closes") or market_data.get("prices") or [0])[-1])
+        breaker_levels = state.get("breaker_levels", [])
+        if not breaker_levels:
+            # Derive from BOS level if available
+            bos = state.get("bos_level")
+            if bos:
+                breaker_levels = [float(bos)]
+            else:
+                return 0.0
+        atr = self._compute_atr(market_data) or 1e-6
+        best = 0.0
+        for lvl in breaker_levels:
+            dist = abs(price - float(lvl))
+            proximity = 1.0 / (dist / atr + 0.5)
+            best = max(best, proximity)
+        return float(min(best, 2.0))
+
+    def _compute_mitigation(self, market_data: Dict, state: Dict) -> float:
+        """MB(x): Mitigation block — price returning to unmitigated order block.
+
+        Score = 1 - (distance / ATR). Score approaches 1 as price nears the level.
+        Zero when distance > 1 ATR.
+        """
+        price = float(market_data.get("close", 0) or
+                      (market_data.get("closes") or market_data.get("prices") or [0])[-1])
+        unmitigated = state.get("unmitigated_levels", [])
+        if not unmitigated:
+            return 0.0
+        atr = self._compute_atr(market_data) or 1e-6
+        best = 0.0
+        for lvl in unmitigated:
+            dist = abs(price - float(lvl))
+            score = max(0.0, 1.0 - dist / atr)
+            best = max(best, score)
+        return float(best)
+
+    def _compute_ote(self, market_data: Dict, state: Dict) -> float:
+        """OTE(x): Optimal Trade Entry — Fibonacci 0.62-0.79 retracement zone.
+
+        Swing high/low MUST come from a confirmed BOS structure, not arbitrary window.
+        Returns 1.0 in core OTE, 0.5 in extended OTE, 0.0 outside.
+        """
+        swing_high, swing_low = self._get_swing_levels(market_data, state)
+        if swing_high == 0 or swing_low == 0 or swing_high == swing_low:
+            return 0.0
+        price = float(market_data.get("close", 0) or
+                      (market_data.get("closes") or market_data.get("prices") or [0])[-1])
+        rng = swing_high - swing_low
+        bias = state.get("bias", "bullish")
+        if bias == "bullish":
+            retracement = (swing_high - price) / rng
+        else:
+            retracement = (price - swing_low) / rng
+
         if 0.62 <= retracement <= 0.79:
             return 1.0
-        elif 0.5 <= retracement <= 0.88:
+        if 0.50 <= retracement < 0.62 or 0.79 < retracement <= 0.90:
             return 0.5
         return 0.0
-    
+
     def _compute_judas(self, market_data: Dict, state: Dict) -> float:
-        """J(x,t): Judas swing detection"""
-        session = market_data.get("session", "")
-        if session not in ["london", "ny"]:
+        """J(x,t): Judas Swing — early session false move against expected direction.
+
+        Requires active session (london or ny). Score = reversal speed normalized by ATR.
+        A fast reversal after a false breakout signals higher probability Judas.
+        """
+        session = (market_data.get("session") or "").lower()
+        if session not in ("london", "ny", "london_open", "ny_open", "new_york"):
             return 0.0
-        
-        # Simplified: check for initial false move at session open
-        prices = market_data.get("prices", [])
+        prices = market_data.get("prices", []) or market_data.get("closes", [])
         if len(prices) < 10:
             return 0.0
-        
-        first_5 = prices[:5]
-        next_5 = prices[5:10]
-        
-        initial_move = np.mean(first_5)
-        subsequent = np.mean(next_5)
-        
-        # Opposite move = Judas
-        if abs(subsequent - initial_move) / initial_move > 0.003:
-            return 1.0
+        atr = self._compute_atr(market_data) or 1e-6
+        # First 5 bars = initial session move; next 5 = reversal
+        first_move = float(prices[4] - prices[0])
+        reversal = float(prices[-1] - prices[4])
+        # Judas: first_move and reversal are opposite signs, reversal is meaningful
+        if first_move * reversal < 0 and abs(reversal) > 0.5 * atr:
+            score = min(abs(reversal) / atr, 3.0)
+            return float(score)
         return 0.0
-    
+
     def _compute_accumulation(self, market_data: Dict, state: Dict) -> float:
-        """A(x,t): Wyckoff accumulation/distribution"""
-        prices = market_data.get("prices", [])
-        volumes = market_data.get("volume", [])
-        
+        """A(x,t): Wyckoff Accumulation/Distribution phase detection.
+
+        Accumulation = range compression (recent < earlier) + volume dry-up.
+        Distribution = range expansion + climactic volume.
+        Score: 0=neutral, 1=accumulation, -1=distribution (abs value returned for energy).
+        """
+        prices = market_data.get("prices", []) or market_data.get("closes", [])
+        volumes = market_data.get("volume", []) or market_data.get("volumes", [])
         if len(prices) < 20 or len(volumes) < 20:
-            return 0.5
-        
-        # Check for range-bound with declining volume = accumulation
-        recent_range = max(prices[-20:]) - min(prices[-20:])
-        earlier_range = max(prices[-40:-20]) - min(prices[-40:-20]) if len(prices) >= 40 else recent_range
-        
-        recent_vol = np.mean(volumes[-20:])
-        earlier_vol = np.mean(volumes[-40:-20]) if len(volumes) >= 40 else recent_vol
-        
-        if recent_range < earlier_range * 0.5 and recent_vol < earlier_vol * 0.7:
+            return 0.3  # Insufficient data = neutral small score
+
+        recent_prices = prices[-20:]
+        earlier_prices = prices[-40:-20] if len(prices) >= 40 else prices[:20]
+        recent_range = float(max(recent_prices) - min(recent_prices))
+        earlier_range = float(max(earlier_prices) - min(earlier_prices))
+
+        recent_vol = float(np.mean(volumes[-20:]))
+        earlier_vol = float(np.mean(volumes[-40:-20]) if len(volumes) >= 40 else np.mean(volumes[:20]))
+
+        range_compressed = recent_range < earlier_range * 0.65
+        vol_dry = recent_vol < earlier_vol * 0.75
+        vol_climax = recent_vol > earlier_vol * 1.5
+
+        if range_compressed and vol_dry:
             return 1.0  # Accumulation
-        return 0.5
-    
+        if not range_compressed and vol_climax:
+            return 0.8  # Distribution (still positive for energy contribution)
+        return 0.3
+
     def _compute_projection(self, market_data: Dict, state: Dict) -> float:
-        """⟨ψ|O|ψ⟩: Final measurement projection"""
-        # Compute expectation value across all operators
-        total = 0.0
+        """O18 = <psi|H_market|psi>: Quantum expectation value of market Hamiltonian.
+
+        Builds state vector psi from the 17 operator scores, computes quadratic form
+        psi^T H_market psi where H_market is a diagonal approximation (operator scores
+        as eigenvalues). This is the true quantum measurement, not a simple average.
+        """
+        scores = []
         for name, op in self.operators.items():
             if name != "projection":
-                total += op.apply(market_data, state)
-        return total / max(len(self.operators) - 1, 1)
+                scores.append(op.apply(market_data, state))
+
+        if not scores:
+            return 0.0
+
+        psi = np.array(scores, dtype=float)
+        norm = float(np.linalg.norm(psi))
+        if norm < 1e-9:
+            return 0.0
+        psi_normalized = psi / norm
+
+        # Diagonal Hamiltonian: H_market = diag(scores)
+        # <psi|H|psi> = sum_i psi_i^2 * h_i  (quadratic form on diagonal matrix)
+        expectation = float(np.dot(psi_normalized ** 2, psi))
+        return float(expectation)
     
     # ============== UTILITY METHODS ==============
     

@@ -176,117 +176,201 @@ class LeastActionGenerator:
     """
     Euler-Lagrange equation solver with RK4 integration.
     Generates candidate trajectories from initial conditions.
+
+    T2-A: When a christoffel_func is supplied, initial velocity seeds are
+          adjusted using the local geodesic curvature at the starting point
+          so trajectories follow geometrically natural directions.
+
+    T2-B: When a christoffel_func is supplied, the RK4 force at each
+          sub-step is computed from the live liquidity-field gradient
+          (-∂_p ϕ = -Γ^p_pp) plus the geodesic curvature correction,
+          replacing the original constant "force" placeholder.
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
                  n_trajectories: int = 5,
                  n_steps: int = 20,
-                 time_horizon: float = 1.0):
+                 time_horizon: float = 1.0,
+                 epsilon: float = 0.015):
         self.n_trajectories = n_trajectories
         self.n_steps = n_steps
         self.dt = time_horizon / n_steps
-        
+        self.epsilon = epsilon
+
     def generate_trajectories(self,
-                            initial_state: Dict,
-                            market_hamiltonian: Dict[str, float],
-                            operator_registry) -> List[Trajectory]:
+                              initial_state: Dict,
+                              market_hamiltonian: Dict[str, float],
+                              operator_registry,
+                              christoffel_func=None,
+                              regime: Optional[str] = None) -> List[Trajectory]:
         """
         Generate candidate trajectory family via RK4 integration.
-        Multiple initial velocity perturbations.
+
+        Args:
+            initial_state: {'price', 'velocity'} starting conditions
+            market_hamiltonian: Hamiltonian values dict (used for action scoring)
+            operator_registry: ICT operator scorer
+            christoffel_func: Optional Γ(price, time) -> ChristoffelSymbols.
+                When provided enables T2-A geodesic velocity seeds and
+                T2-B time-varying gradient force.
         """
         price = initial_state.get("price", 100.0)
-        time = 0.0
-        
-        # Velocity perturbations for trajectory family
+        t0 = 0.0
         base_velocity = initial_state.get("velocity", 0.0)
-        perturbations = np.linspace(-0.02, 0.02, self.n_trajectories)
-        
+
+        # T2-A: geodesic-guided seeds vs uniform perturbations
+        if christoffel_func is not None:
+            perturbations = self._geodesic_velocity_seeds(
+                price, t0, base_velocity, christoffel_func
+            )
+        else:
+            perturbations = list(np.linspace(-0.02, 0.02, self.n_trajectories))
+
         trajectories = []
         for i, pert in enumerate(perturbations):
             velocity = base_velocity + pert
-            initial_state = {"price": price, "velocity": velocity, "time": time}
-            path = self._rk4_integrate(initial_state, market_hamiltonian)
-            
-            # Compute operator scores for this path
-            op_scores = self._compute_operator_scores(path, operator_registry)
-            
-            # Compute action
+            state = {"price": price, "velocity": velocity, "time": t0}
+            path = self._rk4_integrate(
+                state, market_hamiltonian, christoffel_func=christoffel_func
+            )
+
+            op_scores = self._compute_operator_scores(path, operator_registry, regime=regime)
             action = self._compute_path_action(path, market_hamiltonian)
-            
-            # Predicted PnL (simplified)
             predicted_pnl = (path[-1][1] - path[0][1]) / path[0][1] if path else 0
-            
+
             traj = Trajectory(
                 id=f"traj_{i}_{hash(str(path)) % 10000}",
                 path=path,
                 energy=self._compute_energy(path, market_hamiltonian),
                 action=action,
                 operator_scores=op_scores,
-                action_score=-action,  # Lower action = higher score
-                predicted_pnl=predicted_pnl
+                action_score=-action,
+                predicted_pnl=predicted_pnl,
             )
-            
             trajectories.append(traj)
-        
+
         return trajectories
-    
-    def _rk4_integrate(self, 
-                      initial_state: Dict[str, float],
-                      hamiltonian: Dict[str, float],
-                      n_steps: int = 50) -> List[Tuple[float, float]]:
+
+    def _geodesic_velocity_seeds(
+        self,
+        price: float,
+        time: float,
+        base_velocity: float,
+        christoffel_func,
+    ) -> List[float]:
+        """
+        T2-A: Adjust N initial velocity perturbations using the local geodesic
+        curvature tensor at the starting point.
+
+        For each candidate velocity v the geodesic equation gives a
+        first-order correction dv = -(Γ^p_pp v² + 2Γ^p_pt v + Γ^p_tt) dt.
+        This shifts seeds toward the manifold's natural tangent directions.
+        """
+        base_perturbs = np.linspace(-0.02, 0.02, self.n_trajectories)
+        try:
+            G = christoffel_func(price, time)
+            seeds = []
+            for v_pert in base_perturbs:
+                v = base_velocity + v_pert
+                # First-order geodesic correction (v_t = 1, physical time param)
+                dv = -(G.G_p_pp * v ** 2 + 2.0 * G.G_p_pt * v + G.G_p_tt) * self.dt
+                seeds.append(v + dv)
+            return seeds
+        except Exception:
+            return list(base_velocity + base_perturbs)
+
+    def _rk4_integrate(self,
+                       initial_state: Dict[str, float],
+                       hamiltonian: Dict[str, float],
+                       n_steps: int = 50,
+                       christoffel_func=None) -> List[Tuple[float, float]]:
         """
         RK4 integration for trajectory generation.
-        Uses accelerated backend when available.
-        Solves: dx/dt = v, dv/dt = -∇V
+
+        T2-B: When christoffel_func is provided the acceleration at each
+        sub-step combines two physics terms evaluated at the sub-step price:
+          1. Potential gradient force:  -Γ^p_pp  (= -∂_p ϕ)
+          2. Geodesic curvature:        -(Γ^p_pp v² + 2Γ^p_pt v + Γ^p_tt)
+        Together they implement the full geodesic equation with an external
+        liquidity-field potential, replacing the constant "force" placeholder.
+
+        Falls back to accelerated backend only when christoffel_func is None
+        (backend requires a constant force parameter).
         """
         price = initial_state["price"]
         velocity = initial_state["velocity"]
-        potential_force = hamiltonian.get("force", 0.01)
-        
-        # Use accelerated backend if available (10-1000x speedup)
-        if ACCELERATED_AVAILABLE:
+        time = initial_state.get("time", 0.0)
+
+        # Accelerated backend path — constant force only (no geodesic)
+        if ACCELERATED_AVAILABLE and christoffel_func is None:
             backend = get_backend()
+            potential_force = hamiltonian.get("force", 0.01)
             path_array = backend.rk4_integrate(
-                price, velocity, self.dt, n_steps,
-                potential_force, noise_scale=0.001
+                price, velocity, self.dt, n_steps, potential_force, noise_scale=0.001
             )
-            # Convert to list of tuples
             return [(i * self.dt, path_array[i]) for i in range(n_steps)]
-        
-        # NumPy fallback (original implementation)
+
+        # NumPy path — constant force fallback
+        if christoffel_func is None:
+            potential_force = hamiltonian.get("force", 0.01)
+
         path = []
-        time = 0.0
         dt = self.dt
-        
+
         for _ in range(n_steps):
-            # RK4 steps
-            k1_v = potential_force * dt
-            k1_x = velocity * dt
-            
-            k2_v = potential_force * dt
-            k2_x = (velocity + 0.5 * k1_v) * dt
-            
-            k3_v = potential_force * dt
-            k3_x = (velocity + 0.5 * k2_v) * dt
-            
-            k4_v = potential_force * dt
-            k4_x = (velocity + k3_v) * dt
-            
-            # Update
-            velocity += (k1_v + 2*k2_v + 2*k3_v + k4_v) / 6
-            price += (k1_x + 2*k2_x + 2*k3_x + k4_x) / 6
-            time += self.dt
-            # Add noise for realism
+            if christoffel_func is not None:
+                # T2-B: time-varying acceleration from Christoffel symbols.
+                # Evaluated freshly at each of the 4 RK4 sub-steps.
+                def accel(p: float, t: float, v: float) -> float:
+                    G = christoffel_func(p, t)
+                    grad_force = -G.G_p_pp                           # -∂_p ϕ
+                    curvature = -(G.G_p_pp * v ** 2
+                                  + 2.0 * G.G_p_pt * v
+                                  + G.G_p_tt)                        # geodesic term
+                    return grad_force + curvature
+
+                a0 = accel(price, time, velocity)
+                k1_v = a0 * dt
+                k1_x = velocity * dt
+
+                a1 = accel(price + 0.5 * k1_x, time + 0.5 * dt, velocity + 0.5 * k1_v)
+                k2_v = a1 * dt
+                k2_x = (velocity + 0.5 * k1_v) * dt
+
+                a2 = accel(price + 0.5 * k2_x, time + 0.5 * dt, velocity + 0.5 * k2_v)
+                k3_v = a2 * dt
+                k3_x = (velocity + 0.5 * k2_v) * dt
+
+                a3 = accel(price + k3_x, time + dt, velocity + k3_v)
+                k4_v = a3 * dt
+                k4_x = (velocity + k3_v) * dt
+            else:
+                # Original constant-force NumPy fallback
+                k1_v = potential_force * dt
+                k1_x = velocity * dt
+                k2_v = potential_force * dt
+                k2_x = (velocity + 0.5 * k1_v) * dt
+                k3_v = potential_force * dt
+                k3_x = (velocity + 0.5 * k2_v) * dt
+                k4_v = potential_force * dt
+                k4_x = (velocity + k3_v) * dt
+
+            velocity += (k1_v + 2 * k2_v + 2 * k3_v + k4_v) / 6
+            price += (k1_x + 2 * k2_x + 2 * k3_x + k4_x) / 6
+            time += dt
             price += np.random.normal(0, abs(0.001 * price))
-            
+
             path.append((time, price))
-        
+
         return path
     
     def _compute_operator_scores(self,
                                path: List[Tuple[float, float]],
-                               operator_registry) -> Dict[str, float]:
+                               operator_registry,
+                               regime: Optional[str] = None) -> Dict[str, float]:
         """Compute ICT operator scores for trajectory"""
+        if operator_registry is None:
+            return {}
         # Create synthetic market data from path
         prices = [p for _, p in path]
         if not prices:
@@ -322,7 +406,15 @@ class LeastActionGenerator:
             "ohlc": ohlc,
         }
         
-        return operator_registry.get_all_scores(market_data, {})
+        # T2-D: inject regime-based sailing-lane alpha
+        op_state: Dict = {}
+        if regime is not None:
+            try:
+                from ..operators.operator_registry import OperatorRegistry
+                op_state["sailing_alpha"] = OperatorRegistry.sailing_alpha_from_regime(regime)
+            except Exception:
+                pass
+        return operator_registry.get_all_scores(market_data, op_state)
     
     def _compute_path_action(self,
                            path: List[Tuple[float, float]],

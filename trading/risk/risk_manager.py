@@ -226,6 +226,35 @@ class ProductionRiskManager:
             limit=0.0
         )
     
+    def set_regime_limits(self, regime_params) -> None:
+        """Dynamically update position sizing and stop multiplier from regime parameters.
+
+        Called at orchestrator Stage 3 after regime detection so all downstream
+        checks (Stage 12 ADMISSIBILITY_CHECK, operator O9 risk projector) use
+        current regime-aware limits rather than hardcoded env-var values.
+
+        Args:
+            regime_params: RegimeParameters dataclass from MarketRegimeDetector
+        """
+        with self.lock:
+            if hasattr(regime_params, 'max_position_size'):
+                # Regime max_position_size is a fraction of the configured env limit
+                base = float(os.getenv('MAX_POSITION_SIZE', 0.1))
+                self.max_position_size = base * float(regime_params.max_position_size)
+
+            if hasattr(regime_params, 'stop_loss_multiplier'):
+                self._stop_loss_multiplier = float(regime_params.stop_loss_multiplier)
+
+        logger.info(
+            f"Risk limits updated from regime: "
+            f"max_size={self.max_position_size:.4f}, "
+            f"stop_mult={getattr(self, '_stop_loss_multiplier', 1.0):.2f}"
+        )
+
+    def get_max_allowed(self) -> float:
+        """Return current maximum allowed position size (regime-adaptive)."""
+        return float(self.max_position_size)
+
     def _calculate_correlated_exposure(self, new_symbol: str, new_size: float) -> float:
         """Calculate correlated exposure for a symbol"""
         # Find which correlation group

@@ -20,7 +20,7 @@ These tell us how trajectories bend as they move through the liquidity field.
 """
 
 import numpy as np
-from typing import Tuple, Dict, Optional
+from typing import Callable, Tuple, Dict, Optional
 from dataclasses import dataclass
 
 
@@ -172,6 +172,50 @@ class ConnectionCalculator:
             self.compute_at_point(p, t, ict_structures, microstructure)
             for p, t in path
         ]
+
+
+class ChristoffelProvider:
+    """
+    Factory that returns a Γ(p,t) → ChristoffelSymbols callable.
+
+    Binds a ConnectionCalculator to a snapshot of ICT structures so the
+    trajectory generator and geodesic integrator can query Christoffel
+    symbols at arbitrary (price, time) points without re-passing context.
+
+    Usage:
+        provider = ChristoffelProvider(liquidity_field)
+        christoffel_func = provider.get_christoffel_func(ict_structures, micro)
+        G = christoffel_func(price, time)  # ChristoffelSymbols
+    """
+
+    def __init__(self, liquidity_field) -> None:
+        self._calculator = ConnectionCalculator(liquidity_field)
+
+    def get_christoffel_func(
+        self,
+        ict_structures: Dict,
+        microstructure: Optional[Dict] = None,
+    ) -> Callable[[float, float], ChristoffelSymbols]:
+        """
+        Return a closure Γ(price, time) → ChristoffelSymbols.
+
+        The returned callable is cheap to call repeatedly — it delegates to
+        ConnectionCalculator.compute_at_point(), which uses numerical
+        differentiation of the liquidity field ϕ(p,t).
+
+        Args:
+            ict_structures: ICT geometry snapshot (order blocks, FVGs, etc.)
+            microstructure: Optional microstructure data (session, spread, etc.)
+
+        Returns:
+            Callable (price, time) → ChristoffelSymbols
+        """
+        calculator = self._calculator
+
+        def christoffel_at(price: float, time: float) -> ChristoffelSymbols:
+            return calculator.compute_at_point(price, time, ict_structures, microstructure)
+
+        return christoffel_at
 
 
 def interpret_christoffel(G: ChristoffelSymbols) -> str:

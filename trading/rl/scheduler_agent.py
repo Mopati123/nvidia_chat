@@ -77,6 +77,7 @@ class PPOSchedulerAgent:
         # Tracking
         self.n_updates = 0
         self.total_steps = 0
+        self.recent_pnl: List[float] = []  # T2-C: rolling PnL history for state vector
         
         logger.info(f"PPO Agent initialized on {self.device}")
     
@@ -120,6 +121,10 @@ class PPOSchedulerAgent:
         """Store transition in buffer"""
         self.buffer.add(state, action, reward, log_prob, value, done)
         self.total_steps += 1
+        # T2-C: maintain rolling PnL history used by PPOPaperHook state builder
+        self.recent_pnl.append(float(reward))
+        if len(self.recent_pnl) > 100:
+            self.recent_pnl = self.recent_pnl[-100:]
     
     def update(self) -> Dict[str, float]:
         """

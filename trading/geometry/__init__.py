@@ -13,7 +13,7 @@ Transforms ICT patterns into rigorous differential geometry.
 
 from .liquidity_field import LiquidityField, compute_liquidity_field
 from .metric import ConformalMetric, MetricTensor
-from .connection import ChristoffelSymbols, compute_christoffel
+from .connection import ChristoffelSymbols, compute_christoffel, ChristoffelProvider
 from .curvature import gaussian_curvature, CurvatureAnalyzer, CurvatureRegime, classify_regime, CurvatureData
 from .geodesic import GeodesicIntegrator, integrate_geodesic, GeodesicState
 
@@ -24,6 +24,7 @@ __all__ = [
     'MetricTensor',
     'ChristoffelSymbols',
     'compute_christoffel',
+    'ChristoffelProvider',
     'gaussian_curvature',
     'CurvatureAnalyzer',
     'CurvatureRegime',

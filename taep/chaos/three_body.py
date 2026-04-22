@@ -222,7 +222,7 @@ class ThreeBodyEngine:
         # log(d) = log(d₀) + λt
         if len(divergence_history) > 10:
             times = np.arange(len(divergence_history)) * dt
-            log_divergence = np.log(divergence_history + 1e-300)  # Avoid log(0)
+            log_divergence = np.log(np.array(divergence_history) + 1e-300)  # Avoid log(0)
             
             # Linear fit
             slope = np.polyfit(times, log_divergence, 1)[0]

@@ -182,7 +182,53 @@ class ConstraintHamiltonian:
         prior_status = market_state.get(f"execution_{depends_on}", "completed")
         return prior_status == "completed"
     
-    def apply_constraints(self, 
+    def evaluate_projectors(self,
+                            trajectories: List[Dict],
+                            market_state: Dict) -> Dict:
+        """
+        Evaluate all 5 constraint projectors individually and return per-projector results.
+
+        Returns dict with:
+          - one bool per projector (session, risk, regime, sequence, reconciliation)
+          - "all_passed": True only when every projector passes for at least one trajectory
+          - "admissible_trajectories": trajectories that survived the full gate stack
+
+        Use this instead of apply_constraints() when you need per-projector accountability.
+        """
+        self.violations = []
+        admissible = []
+        projector_names = list(self.projectors.keys())
+        per_projector_global = {name: False for name in projector_names}
+
+        for traj in trajectories:
+            traj_results = {}
+            traj_admissible = True
+
+            for name, projector in self.projectors.items():
+                passed = projector.apply(traj, market_state)
+                traj_results[name] = passed
+                if not passed:
+                    traj_admissible = False
+                    self.violations.append(ConstraintViolation(
+                        name,
+                        projector.type,
+                        {"trajectory_id": traj.get("id", "unknown")},
+                        "fatal"
+                    ))
+                else:
+                    per_projector_global[name] = True  # at least one traj passed this projector
+
+            if traj_admissible:
+                admissible.append(traj)
+
+        all_passed = bool(admissible) and all(per_projector_global.values())
+        return {
+            **per_projector_global,
+            "all_passed": all_passed,
+            "admissible_trajectories": admissible
+        }
+
+    def apply_constraints(self,
                          trajectories: List[Dict],
                          market_state: Dict) -> List[Dict]:
         """

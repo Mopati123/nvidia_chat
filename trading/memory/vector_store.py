@@ -1,156 +1,202 @@
 """
-Vector Database for Market Pattern Memory
+Vector Database for Market Pattern Memory  (T2-E: FAISS backend)
 
 Stores market state embeddings with trajectory outcomes for similarity-based retrieval.
-Uses ChromaDB for efficient approximate nearest neighbor search.
+Uses FAISS IndexFlatIP on L2-normalised embeddings for in-process cosine similarity
+search — no external process dependency, faster cold start, mmap-friendly persistence.
 
-First Principles:
-- Store: Market embedding → Trajectory outcomes + Metadata
-- Query: Similar markets → Retrieve historical success patterns
-- Bias: Weight current trajectories by historical success of similar states
+Public interface is unchanged from the ChromaDB version:
+  store_pattern(), query_similar(), compute_memory_bias(), get_stats(), etc.
 """
 
-import chromadb
 import json
 import hashlib
-import numpy as np
-from typing import List, Dict, Optional, Tuple, Any
-from datetime import datetime
-from dataclasses import dataclass, asdict
-from pathlib import Path
 import logging
+import struct
+from collections import OrderedDict
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+
+try:
+    import faiss
+    _FAISS_AVAILABLE = True
+except ImportError:                         # graceful fallback: pure-numpy brute force
+    _FAISS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
+EMBED_DIM = 128
+_LRU_MAXSIZE = 256                          # query cache entries
+
+
+# ---------------------------------------------------------------------------
+# PatternMemory — unchanged from ChromaDB version
+# ---------------------------------------------------------------------------
 
 @dataclass
 class PatternMemory:
-    """
-    A stored market pattern with trajectory outcomes.
-    
-    This is the core data structure for pattern memory.
-    """
+    """A stored market pattern with trajectory outcomes."""
     pattern_id: str
     timestamp: str
     symbol: str
     timeframe: str
-    
-    # Market state embedding (128-dim, not stored directly)
     embedding_hash: str
-    
-    # Trajectory outcomes
-    trajectories: List[Dict]  # List of {trajectory_id, pnl, success, operators_used}
-    
-    # Aggregate metrics
+    trajectories: List[Dict]
     best_trajectory_id: Optional[str]
     best_pnl: float
     avg_pnl: float
-    win_rate: float  # % of profitable trajectories
-    
-    # Market context (for debugging/analysis)
-    market_summary: Dict  # {trend, volatility, session, etc.}
-    
-    # Evidence hash for audit
+    win_rate: float
+    market_summary: Dict
     evidence_hash: str
-    
+
     def to_dict(self) -> Dict:
-        """Convert to dictionary for ChromaDB storage"""
-        # ChromaDB only supports primitive types in metadata
-        # So we serialize complex types to JSON strings
-        data = dict(asdict(self))  # Create a copy
-        
-        # Serialize list/dict fields to JSON
+        data = dict(asdict(self))
         for key in ['trajectories', 'market_summary']:
             if key in data and data[key] is not None:
                 data[key] = json.dumps(data[key])
-        
         return data
-    
+
     @classmethod
     def from_dict(cls, data: Dict) -> 'PatternMemory':
-        """Create from dictionary with JSON deserialization"""
-        # Create a copy to avoid modifying the input
         data = dict(data)
-        
-        # Deserialize JSON fields
         for key in ['trajectories', 'market_summary']:
             if key in data and isinstance(data[key], str):
                 try:
                     data[key] = json.loads(data[key])
                 except json.JSONDecodeError:
                     data[key] = {} if key == 'market_summary' else []
-        
         return cls(**data)
 
 
+# ---------------------------------------------------------------------------
+# FAISS-backed vector store
+# ---------------------------------------------------------------------------
+
 class PatternVectorStore:
     """
-    Vector database for storing and querying market patterns.
-    
-    Uses ChromaDB with cosine similarity for pattern matching.
+    Vector database using FAISS for in-process cosine similarity search.
+
+    Persistence layout under persist_dir:
+        faiss_index.bin  — FAISS index (mmap-friendly)
+        metadata.json    — list of serialised PatternMemory dicts (same order as FAISS)
     """
-    
+
     COLLECTION_NAME = "market_patterns"
     PERSIST_DIR = Path.home() / ".apexquantumict" / "vector_db"
-    
-    def __init__(self, collection_name: Optional[str] = None, 
-                 persist_dir: Optional[Path] = None):
+
+    def __init__(self,
+                 collection_name: Optional[str] = None,
+                 persist_dir: Optional[Path] = None) -> None:
         self.collection_name = collection_name or self.COLLECTION_NAME
-        self.persist_dir = persist_dir or self.PERSIST_DIR
-        
-        # Ensure directory exists
+        self.persist_dir = Path(persist_dir or self.PERSIST_DIR)
         self.persist_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Initialize ChromaDB (new API)
-        self.client = chromadb.PersistentClient(path=str(self.persist_dir))
-        
-        # Get or create collection
-        self.collection = self.client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"}  # Cosine similarity
-        )
-        
-        logger.info(f"Vector store initialized: {self.persist_dir}")
-    
+
+        self._index_path = self.persist_dir / ("faiss_index.bin" if _FAISS_AVAILABLE
+                                                 else "faiss_index.npy")
+        self._meta_path  = self.persist_dir / "metadata.json"
+
+        # FAISS index (inner product on L2-normalised vectors = cosine sim)
+        if _FAISS_AVAILABLE:
+            self._index: Any = faiss.IndexFlatIP(EMBED_DIM)
+        else:
+            self._index = _BruteForceIndex(EMBED_DIM)
+
+        # Metadata list — one entry per FAISS sequential id
+        self._meta_list: List[Dict] = []          # index i → serialised PatternMemory
+        self._id_map: Dict[str, int] = {}         # pattern_id → faiss int id
+
+        # LRU query cache: embedding_hash → List[PatternMemory]
+        self._query_cache: "OrderedDict[str, List[PatternMemory]]" = OrderedDict()
+
+        self._load_from_disk()
+        logger.info("FAISS vector store: %d patterns loaded from %s",
+                    len(self._meta_list), self.persist_dir)
+
+    # ------------------------------------------------------------------
+    # Persistence helpers
+    # ------------------------------------------------------------------
+
+    def _load_from_disk(self) -> None:
+        if self._meta_path.exists():
+            try:
+                with open(self._meta_path, "r", encoding="utf-8") as f:
+                    self._meta_list = json.load(f)
+                # rebuild id_map
+                self._id_map = {m["pattern_id"]: i for i, m in enumerate(self._meta_list)}
+            except Exception as exc:
+                logger.warning("Could not load metadata: %s", exc)
+                self._meta_list = []
+                self._id_map = {}
+
+        if self._index_path.exists():
+            try:
+                if _FAISS_AVAILABLE:
+                    self._index = faiss.read_index(str(self._index_path))
+                else:
+                    self._index.load(self._index_path)
+            except Exception as exc:
+                logger.warning("Could not load index from disk: %s", exc)
+                if _FAISS_AVAILABLE:
+                    self._index = faiss.IndexFlatIP(EMBED_DIM)
+
+    def _save_to_disk(self) -> None:
+        try:
+            with open(self._meta_path, "w", encoding="utf-8") as f:
+                json.dump(self._meta_list, f)
+            if _FAISS_AVAILABLE:
+                faiss.write_index(self._index, str(self._index_path))
+            else:
+                self._index.save(self._index_path)
+        except Exception as exc:
+            logger.error("Could not persist vector store: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Embedding utilities
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _l2_normalize(vec: np.ndarray) -> np.ndarray:
+        norm = np.linalg.norm(vec)
+        return (vec / norm).astype("float32") if norm > 1e-9 else vec.astype("float32")
+
     def _compute_embedding_hash(self, embedding: np.ndarray) -> str:
-        """Compute hash of embedding for deduplication"""
-        # Quantize to reduce noise
         quantized = np.round(embedding, decimals=4)
         return hashlib.sha256(quantized.tobytes()).hexdigest()[:16]
-    
+
+    def _cache_key(self, embedding: np.ndarray) -> str:
+        return self._compute_embedding_hash(embedding)
+
+    def _cache_put(self, key: str, value: List[PatternMemory]) -> None:
+        self._query_cache[key] = value
+        if len(self._query_cache) > _LRU_MAXSIZE:
+            self._query_cache.popitem(last=False)
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
     def store_pattern(self,
-                     embedding: np.ndarray,
-                     symbol: str,
-                     timeframe: str,
-                     trajectories: List[Dict],
-                     market_summary: Optional[Dict] = None,
-                     evidence_hash: str = "") -> str:
-        """
-        Store a market pattern with trajectory outcomes.
-        
-        Args:
-            embedding: 128-dim market state embedding
-            symbol: Trading pair (e.g., "EURUSD")
-            timeframe: Candle timeframe (e.g., "1h", "15m")
-            trajectories: List of trajectory outcomes
-            market_summary: Additional context
-            evidence_hash: For audit trail
-        
-        Returns:
-            pattern_id: Unique identifier for this pattern
-        """
-        # Compute pattern ID from embedding
+                      embedding: np.ndarray,
+                      symbol: str = "",
+                      timeframe: str = "",
+                      trajectories: Optional[List[Dict]] = None,
+                      market_summary: Optional[Dict] = None,
+                      evidence_hash: str = "") -> str:
+        """Store a market pattern embedding with trajectory outcomes."""
+        trajectories = trajectories or []
         embedding_hash = self._compute_embedding_hash(embedding)
-        pattern_id = f"{symbol}_{timeframe}_{embedding_hash}_{datetime.now().isoformat()}"
-        pattern_id = hashlib.sha256(pattern_id.encode()).hexdigest()[:16]
-        
-        # Aggregate metrics
-        pnls = [t.get('pnl', 0) for t in trajectories]
-        successes = [t.get('success', False) for t in trajectories]
-        
-        best_idx = np.argmax(pnls) if pnls else 0
-        best_trajectory = trajectories[best_idx] if trajectories else None
-        
+        raw_id = f"{symbol}_{timeframe}_{embedding_hash}_{datetime.now().isoformat()}"
+        pattern_id = hashlib.sha256(raw_id.encode()).hexdigest()[:16]
+
+        pnls = [t.get("pnl", 0) for t in trajectories]
+        successes = [t.get("success", False) for t in trajectories]
+        best_idx = int(np.argmax(pnls)) if pnls else 0
+        best_traj = trajectories[best_idx] if trajectories else None
+
         memory = PatternMemory(
             pattern_id=pattern_id,
             timestamp=datetime.now().isoformat(),
@@ -158,205 +204,197 @@ class PatternVectorStore:
             timeframe=timeframe,
             embedding_hash=embedding_hash,
             trajectories=trajectories,
-            best_trajectory_id=best_trajectory.get('trajectory_id') if best_trajectory else None,
-            best_pnl=float(best_trajectory.get('pnl', 0)) if best_trajectory else 0.0,
+            best_trajectory_id=best_traj.get("trajectory_id") if best_traj else None,
+            best_pnl=float(best_traj.get("pnl", 0)) if best_traj else 0.0,
             avg_pnl=float(np.mean(pnls)) if pnls else 0.0,
             win_rate=float(np.mean(successes)) if successes else 0.0,
             market_summary=market_summary or {},
-            evidence_hash=evidence_hash
+            evidence_hash=evidence_hash,
         )
-        
-        # Store in ChromaDB
-        self.collection.add(
-            ids=[pattern_id],
-            embeddings=[embedding.tolist()],
-            metadatas=[memory.to_dict()]
-        )
-        
-        logger.debug(f"Stored pattern {pattern_id} for {symbol} ({timeframe})")
+
+        vec = self._l2_normalize(embedding).reshape(1, -1)
+        self._index.add(vec)
+        faiss_id = len(self._meta_list)
+        self._meta_list.append(memory.to_dict())
+        self._id_map[pattern_id] = faiss_id
+
+        self._query_cache.clear()          # invalidate cache on write
+        self._save_to_disk()
+        logger.debug("Stored pattern %s for %s (%s)", pattern_id, symbol, timeframe)
         return pattern_id
-    
+
     def query_similar(self,
-                     embedding: np.ndarray,
-                     symbol: Optional[str] = None,
-                     timeframe: Optional[str] = None,
-                     top_k: int = 10,
-                     min_similarity: float = 0.7) -> List[PatternMemory]:
-        """
-        Query for similar market patterns.
-        
-        Args:
-            embedding: Query market state embedding
-            symbol: Filter by symbol (optional)
-            timeframe: Filter by timeframe (optional)
-            top_k: Number of results to return
-            min_similarity: Minimum cosine similarity (0-1)
-        
-        Returns:
-            List of PatternMemory objects, sorted by similarity
-        """
-        # Build where clause (new ChromaDB API requires $eq operator and $and for multiple conditions)
-        conditions = []
-        if symbol:
-            conditions.append({"symbol": {"$eq": symbol}})
-        if timeframe:
-            conditions.append({"timeframe": {"$eq": timeframe}})
-        
-        if len(conditions) == 1:
-            where = conditions[0]
-        elif len(conditions) > 1:
-            where = {"$and": conditions}
-        else:
-            where = None
-        
-        # Query ChromaDB
-        results = self.collection.query(
-            query_embeddings=[embedding.tolist()],
-            n_results=top_k * 2,  # Get more, filter by similarity
-            where=where
-        )
-        
-        # Parse results
-        memories = []
-        if results['ids'] and results['ids'][0]:
-            for i, pattern_id in enumerate(results['ids'][0]):
-                distance = results['distances'][0][i]
-                # Convert cosine distance to similarity (ChromaDB uses distance, not similarity)
-                # Cosine distance = 1 - cosine similarity
-                similarity = 1 - distance
-                
-                if similarity >= min_similarity:
-                    metadata = results['metadatas'][0][i]
-                    memory = PatternMemory.from_dict(metadata)
-                    # Add similarity score
-                    memory.market_summary['similarity'] = similarity
-                    memories.append(memory)
-        
-        # Sort by similarity and take top_k
-        memories.sort(key=lambda m: m.market_summary.get('similarity', 0), reverse=True)
-        return memories[:top_k]
-    
+                      embedding: np.ndarray,
+                      symbol: Optional[str] = None,
+                      timeframe: Optional[str] = None,
+                      top_k: int = 10,
+                      min_similarity: float = 0.7) -> List[PatternMemory]:
+        """Query for similar market patterns via cosine similarity."""
+        cache_key = self._cache_key(embedding) + f"_{symbol}_{timeframe}_{top_k}_{min_similarity}"
+        if cache_key in self._query_cache:
+            return self._query_cache[cache_key]
+
+        if self._index.ntotal == 0:
+            return []
+
+        vec = self._l2_normalize(embedding).reshape(1, -1)
+        k_search = min(top_k * 2, self._index.ntotal)
+        scores, ids = self._index.search(vec, k_search)
+
+        memories: List[PatternMemory] = []
+        for score, fid in zip(scores[0], ids[0]):
+            if fid < 0 or fid >= len(self._meta_list):
+                continue
+            similarity = float(score)           # inner product of unit vecs = cosine sim
+            if similarity < min_similarity:
+                continue
+            meta = self._meta_list[int(fid)]
+            pm = PatternMemory.from_dict(meta)
+            # filter by symbol / timeframe if requested
+            if symbol and pm.symbol != symbol:
+                continue
+            if timeframe and pm.timeframe != timeframe:
+                continue
+            pm.market_summary["similarity"] = similarity
+            memories.append(pm)
+
+        memories.sort(key=lambda m: m.market_summary.get("similarity", 0), reverse=True)
+        result = memories[:top_k]
+        self._cache_put(cache_key, result)
+        return result
+
     def get_pattern(self, pattern_id: str) -> Optional[PatternMemory]:
-        """Retrieve a specific pattern by ID"""
-        try:
-            result = self.collection.get(ids=[pattern_id])
-            if result['metadatas']:
-                return PatternMemory.from_dict(result['metadatas'][0])
-        except Exception as e:
-            logger.warning(f"Could not retrieve pattern {pattern_id}: {e}")
-        return None
-    
+        fid = self._id_map.get(pattern_id)
+        if fid is None or fid >= len(self._meta_list):
+            return None
+        return PatternMemory.from_dict(self._meta_list[fid])
+
     def delete_pattern(self, pattern_id: str) -> bool:
-        """Delete a pattern from the database"""
-        try:
-            self.collection.delete(ids=[pattern_id])
-            return True
-        except Exception as e:
-            logger.error(f"Failed to delete pattern {pattern_id}: {e}")
+        """Mark a pattern as deleted. FAISS does not support in-place removal;
+        the slot is zeroed and excluded from future search results."""
+        fid = self._id_map.pop(pattern_id, None)
+        if fid is None:
             return False
-    
+        self._meta_list[fid] = {}           # tombstone
+        self._query_cache.clear()
+        self._save_to_disk()
+        return True
+
     def get_stats(self) -> Dict[str, Any]:
-        """Get database statistics"""
-        count = self.collection.count()
+        live = sum(1 for m in self._meta_list if m)
         return {
-            "total_patterns": count,
+            "total_patterns": live,
+            "faiss_ntotal": self._index.ntotal,
             "collection_name": self.collection_name,
-            "persist_dir": str(self.persist_dir)
+            "persist_dir": str(self.persist_dir),
+            "faiss_available": _FAISS_AVAILABLE,
         }
-    
+
     def get_patterns_by_symbol(self, symbol: str, limit: int = 100) -> List[PatternMemory]:
-        """Get all patterns for a specific symbol"""
-        results = self.collection.get(
-            where={"symbol": {"$eq": symbol}},
-            limit=limit
-        )
-        
-        memories = []
-        if results['metadatas']:
-            for metadata in results['metadatas']:
-                memories.append(PatternMemory.from_dict(metadata))
-        
-        return memories
-    
+        results = []
+        for meta in self._meta_list:
+            if not meta:
+                continue
+            if meta.get("symbol") == symbol:
+                results.append(PatternMemory.from_dict(meta))
+            if len(results) >= limit:
+                break
+        return results
+
     def compute_memory_bias(self,
-                           trajectories: List[Any],
-                           similar_memories: List[PatternMemory],
-                           bias_strength: float = 0.3) -> Dict[str, float]:
-        """
-        Compute bias weights for trajectories based on historical success.
-        
-        This is the core RAG (Retrieval-Augmented Generation) logic:
-        - Retrieve similar historical patterns
-        - Weight current trajectories by how similar patterns performed
-        
-        Args:
-            trajectories: Current candidate trajectories
-            similar_memories: Retrieved similar patterns
-            bias_strength: How much to weight memory (0-1)
-        
-        Returns:
-            Dict mapping trajectory_id to bias weight (1.0 = neutral)
-        """
+                            trajectories: List[Any],
+                            similar_memories: List[PatternMemory],
+                            bias_strength: float = 0.3) -> Dict[str, float]:
+        """Compute bias weights for trajectories based on historical success."""
         if not similar_memories:
-            # No memory, neutral weights
-            return {t.id if hasattr(t, 'id') else str(i): 1.0 
-                   for i, t in enumerate(trajectories)}
-        
-        # Compute historical success per operator type
-        operator_success = {}
+            return {t.id if hasattr(t, "id") else str(i): 1.0
+                    for i, t in enumerate(trajectories)}
+
+        operator_success: Dict[tuple, Dict] = {}
         total_weight = 0.0
-        
+
         for memory in similar_memories:
-            similarity = memory.market_summary.get('similarity', 0.5)
-            weight = similarity * (1 + memory.win_rate)  # Weight by similarity and win rate
-            
+            similarity = memory.market_summary.get("similarity", 0.5)
+            weight = similarity * (1 + memory.win_rate)
             for traj in memory.trajectories:
-                op_key = tuple(sorted(traj.get('operators_used', [])))
+                op_key = tuple(sorted(traj.get("operators_used", [])))
                 if op_key not in operator_success:
-                    operator_success[op_key] = {'pnl': 0, 'weight': 0, 'count': 0}
-                
-                operator_success[op_key]['pnl'] += traj.get('pnl', 0) * weight
-                operator_success[op_key]['weight'] += weight
-                operator_success[op_key]['count'] += 1
-            
+                    operator_success[op_key] = {"pnl": 0.0, "weight": 0.0, "count": 0}
+                operator_success[op_key]["pnl"] += traj.get("pnl", 0) * weight
+                operator_success[op_key]["weight"] += weight
+                operator_success[op_key]["count"] += 1
             total_weight += weight
-        
-        # Compute bias for current trajectories
-        biases = {}
+
+        biases: Dict[str, float] = {}
         for i, traj in enumerate(trajectories):
-            traj_id = traj.id if hasattr(traj, 'id') else f"traj_{i}"
-            
-            # Get operators used in this trajectory
-            ops = getattr(traj, 'operators_used', []) or getattr(traj, 'operator_scores', {}).keys()
+            traj_id = traj.id if hasattr(traj, "id") else f"traj_{i}"
+            ops = getattr(traj, "operators_used", []) or list(
+                getattr(traj, "operator_scores", {}).keys()
+            )
             op_key = tuple(sorted(ops)) if ops else ()
-            
-            # Look up historical performance
-            if op_key in operator_success and operator_success[op_key]['weight'] > 0:
-                avg_pnl = (operator_success[op_key]['pnl'] / 
-                          operator_success[op_key]['weight'])
-                # Convert to bias: positive PnL = higher weight
-                bias = 1.0 + (bias_strength * np.tanh(avg_pnl * 10))  # [-1, 1] -> [0.7, 1.3]
+            if op_key in operator_success and operator_success[op_key]["weight"] > 0:
+                avg_pnl = (operator_success[op_key]["pnl"] /
+                           operator_success[op_key]["weight"])
+                bias = 1.0 + bias_strength * float(np.tanh(avg_pnl * 10))
             else:
-                bias = 1.0  # No memory, neutral
-            
+                bias = 1.0
             biases[traj_id] = bias
-        
+
         return biases
 
 
-# Global singleton instance
+# ---------------------------------------------------------------------------
+# Pure-numpy fallback when faiss is not installed
+# ---------------------------------------------------------------------------
+
+class _BruteForceIndex:
+    """Minimal cosine-similarity index using numpy matrix operations."""
+
+    def __init__(self, dim: int) -> None:
+        self.d = dim
+        self._vecs: List[np.ndarray] = []
+
+    @property
+    def ntotal(self) -> int:
+        return len(self._vecs)
+
+    def add(self, x: np.ndarray) -> None:
+        self._vecs.append(x[0].copy())
+
+    def search(self, x: np.ndarray, k: int):
+        if not self._vecs:
+            return np.zeros((1, k), dtype="float32"), -np.ones((1, k), dtype="int64")
+        mat = np.stack(self._vecs)              # (N, d)
+        scores = (mat @ x[0]).astype("float32")  # cosine sim (vecs are unit)
+        top = np.argsort(-scores)[:k]
+        return scores[top].reshape(1, -1), top.astype("int64").reshape(1, -1)
+
+    def save(self, path: Path) -> None:
+        if self._vecs:
+            # path already ends in .npy; np.save would append .npy again — use explicit open
+            with open(str(path), "wb") as f:
+                np.save(f, np.stack(self._vecs))
+
+    def load(self, path: Path) -> None:
+        with open(str(path), "rb") as f:
+            arr = np.load(f, allow_pickle=False)
+        self._vecs = [arr[i] for i in range(len(arr))]
+
+
+# ---------------------------------------------------------------------------
+# Global singleton
+# ---------------------------------------------------------------------------
+
 _vector_store: Optional[PatternVectorStore] = None
 
 
 def get_vector_store(collection_name: Optional[str] = None) -> PatternVectorStore:
-    """Get or create global vector store instance"""
     global _vector_store
     if _vector_store is None:
         _vector_store = PatternVectorStore(collection_name=collection_name)
     return _vector_store
 
 
-def reset_vector_store():
-    """Reset global instance (for testing)"""
+def reset_vector_store() -> None:
     global _vector_store
     _vector_store = None

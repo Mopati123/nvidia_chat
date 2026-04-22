@@ -95,10 +95,15 @@ class PipelineContext:
     reconciliation_status: str = ""
     evidence_hash: str = ""
     weight_update_result: Dict = field(default_factory=dict)
-    
+    risk_check_passed: bool = False
+    risk_check_message: str = ""
+    regime: Optional[Any] = None          # MarketRegime enum from detector
+    regime_params: Optional[Any] = None   # RegimeParameters from detector
+
     # Metadata
     stage_history: List[StageResult] = field(default_factory=list)
     start_time: float = field(default_factory=time.time)
+    adapted_params: Optional[Any] = None
     
     @property
     def duration_ms(self) -> float:
@@ -119,26 +124,41 @@ class PipelineOrchestrator:
     4. Continues or fails based on governance rules
     """
     
-    def __init__(self, 
+    def __init__(self,
                  scheduler=None,
+                 risk_manager=None,
                  use_microstructure: bool = True,
                  use_weight_learning: bool = True):
         """
         Initialize pipeline orchestrator.
-        
+
         Args:
             scheduler: Scheduler instance (created if None)
+            risk_manager: ProductionRiskManager instance (created if None)
             use_microstructure: Enable tick-level microstructure processing
             use_weight_learning: Enable backward-law weight updates
         """
         self.use_microstructure = use_microstructure
         self.use_weight_learning = use_weight_learning
-        
+
         # Initialize scheduler
         if scheduler is None:
             from ..kernel import Scheduler
             scheduler = Scheduler()
         self.scheduler = scheduler
+
+        # Initialize risk manager — hard stops are mandatory, not advisory
+        if risk_manager is None:
+            from ..risk.risk_manager import ProductionRiskManager
+            risk_manager = ProductionRiskManager()
+        self.risk_manager = risk_manager
+
+        # Operator registry — used by trajectory generator for per-path ICT scoring
+        try:
+            from ..operators.operator_registry import OperatorRegistry
+            self.operator_registry = OperatorRegistry()
+        except Exception:
+            self.operator_registry = None
         
         # Stage handlers
         self.stage_handlers: Dict[PipelineStage, Callable] = {
@@ -168,7 +188,7 @@ class PipelineOrchestrator:
         self.success_count = 0
         self.failure_count = 0
         
-    def execute(self, raw_data: Dict, symbol: str, source: str = 'MT5') -> PipelineContext:
+    def execute(self, raw_data: Dict, symbol: str, source: str = 'MT5', adapted_params: Optional[Any] = None) -> PipelineContext:
         """
         Execute complete 20-stage pipeline.
         
@@ -185,7 +205,8 @@ class PipelineOrchestrator:
             symbol=symbol,
             timestamp=time.time(),
             source=source,
-            raw_data=raw_data
+            raw_data=raw_data,
+            adapted_params=adapted_params
         )
         
         logger.info(f"Starting pipeline execution for {symbol}")
@@ -315,17 +336,54 @@ class PipelineOrchestrator:
         return {'state_built': True}
     
     def _stage_ict_extraction(self, context: PipelineContext) -> Dict:
-        """Stage 3: Extract ICT geometry (liquidity, FVGs, structure)"""
-        # This would call ICT operators
-        # For now, placeholder
+        """Stage 3: Extract ICT geometry + detect market regime.
+
+        Regime detection runs here so RegimeParameters are available for:
+        - Stage 5 (TRAJECTORY_GENERATION): epsilon and trajectory_count
+        - Stage 12 (ADMISSIBILITY_CHECK): position size gate
+        - Risk manager: live limit update
+        """
         context.ict_geometry = {
             'liquidity_zones': context.raw_data.get('liquidity_zones', []),
             'fvgs': context.raw_data.get('fvgs', []),
             'session': context.raw_data.get('session', 'ny'),
             'htf_bias': context.raw_data.get('htf_bias', 'neutral'),
         }
-        
-        return {'ict_extracted': True}
+
+        # Regime detection — requires at least a minimal price DataFrame
+        try:
+            import pandas as pd
+            from ..core.market_regime_detector import MarketRegimeDetector
+
+            ohlcv = context.raw_data.get('ohlcv') or context.market_state.get('ohlcv', [])
+            if len(ohlcv) >= 20:
+                df = pd.DataFrame(ohlcv)
+                # Normalize column names to what detector expects
+                col_map = {c: c.lower() for c in df.columns}
+                df.rename(columns=col_map, inplace=True)
+                for col in ('high', 'low', 'close'):
+                    if col not in df.columns and 'price' in df.columns:
+                        df[col] = df['price']
+
+                detector = MarketRegimeDetector()
+                regime, regime_params = detector.detect_regime_with_params(df)
+
+                context.regime = regime
+                context.regime_params = regime_params
+                # Keep backwards compat with adapted_params
+                context.adapted_params = regime_params
+
+                # Wire regime limits into the live risk manager immediately
+                self.risk_manager.set_regime_limits(regime_params)
+
+                context.ict_geometry['regime'] = regime.value
+                logger.info(f"Regime detected: {regime.value}, epsilon_scale={regime_params.epsilon_scale}")
+            else:
+                logger.debug("Insufficient OHLCV data for regime detection; using defaults")
+        except Exception as e:
+            logger.warning(f"Regime detection skipped: {e}")
+
+        return {'ict_extracted': True, 'regime': getattr(context.regime, 'value', 'unknown')}
     
     def _stage_geometry_computation(self, context: PipelineContext) -> Dict:
         """
@@ -399,28 +457,90 @@ class PipelineOrchestrator:
             return {'geometry_computed': False, 'error': str(e)}
     
     def _stage_trajectory_generation(self, context: PipelineContext) -> Dict:
-        """Stage 4: Generate candidate trajectory families"""
+        """Stage 5: Generate candidate trajectory families with regime-aware parameters.
+
+        T2-A: Builds a Γ(p,t) → ChristoffelSymbols callable from the liquidity
+              field so initial velocity seeds are bent by local geodesic curvature.
+        T2-B: The same callable drives time-varying RK4 acceleration at each
+              sub-step (replaces the constant "force" placeholder).
+
+        Falls back to uniform perturbations + constant force if the liquidity
+        field or ICT geometry is unavailable.
+        """
         from ..path_integral import LeastActionGenerator
-        
-        generator = LeastActionGenerator(n_trajectories=5)
-        
-        # Mock generation (would use real operator registry)
+        from ..geometry.connection import ChristoffelProvider
+        from ..geometry.liquidity_field import LiquidityField
+
+        BASE_EPSILON = 0.015
+        n_trajectories = 5
+        epsilon = BASE_EPSILON
+        risk_aversion = 1.0
+
+        rp = context.regime_params or context.adapted_params
+        if rp is not None:
+            if hasattr(rp, 'trajectory_count'):
+                n_trajectories = int(rp.trajectory_count)
+            if hasattr(rp, 'epsilon_scale'):
+                epsilon = BASE_EPSILON * float(rp.epsilon_scale)
+            if hasattr(rp, 'risk_aversion'):
+                risk_aversion = float(rp.risk_aversion)
+
+        logger.debug(
+            f"Trajectory generation: n={n_trajectories}, "
+            f"epsilon={epsilon:.5f}, risk_aversion={risk_aversion:.2f}"
+        )
+
+        micro = context.market_state.get('microstructure', {})
         initial_state = {
-            'price': context.market_state.get('microstructure', {}).get('mid', 1.0),
-            'velocity': context.market_state.get('microstructure', {}).get('velocity', 0.0),
+            'price': micro.get('mid', 1.0),
+            'velocity': micro.get('velocity', 0.0),
         }
-        
-        # Create simple trajectories
-        context.trajectories = [
-            {
-                'id': f'traj_{i}',
-                'path': [(j, initial_state['price'] + i * 0.0001 * j) for j in range(20)],
-                'energy': 0.5 + i * 0.1,
-            }
-            for i in range(5)
-        ]
-        
-        return {'trajectories_generated': len(context.trajectories)}
+
+        # T2-A: build Christoffel closure bound to current ICT geometry
+        christoffel_func = None
+        try:
+            lf = LiquidityField()
+            provider = ChristoffelProvider(lf)
+            christoffel_func = provider.get_christoffel_func(
+                context.ict_geometry or {},
+                micro,
+            )
+        except Exception as e:
+            logger.warning(f"ChristoffelProvider unavailable, using flat trajectories: {e}")
+
+        generator = LeastActionGenerator(
+            n_trajectories=n_trajectories,
+            epsilon=epsilon,
+        )
+
+        try:
+            trajectories = generator.generate_trajectories(
+                initial_state,
+                {},                    # Hamiltonian values computed per-path internally
+                self.operator_registry if hasattr(self, 'operator_registry') else None,
+                christoffel_func=christoffel_func,
+                regime=getattr(context.regime, 'value', None),  # T2-D: regime → sailing alpha
+            )
+            context.trajectories = [t.to_dict() for t in trajectories]
+        except Exception as e:
+            logger.warning(f"Trajectory generation failed ({e}), using linear fallback")
+            price = initial_state['price']
+            context.trajectories = [
+                {
+                    'id': f'traj_{i}',
+                    'path': [(j, price + i * 0.0001 * j) for j in range(20)],
+                    'energy': 0.5 + i * 0.1 * risk_aversion,
+                }
+                for i in range(n_trajectories)
+            ]
+
+        return {
+            'trajectories_generated': len(context.trajectories),
+            'epsilon': epsilon,
+            'n_trajectories': n_trajectories,
+            'geodesic_guided': christoffel_func is not None,
+            'regime': getattr(context.regime, 'value', 'unknown'),
+        }
     
     def _stage_ramanujan_compression(self, context: PipelineContext) -> Dict:
         """Stage 5: Compress paths into families"""
@@ -510,16 +630,55 @@ class PipelineOrchestrator:
         return {'proposal': context.proposal}
     
     def _stage_admissibility_check(self, context: PipelineContext) -> Dict:
-        """Stage 12: Final admissibility check (risk, limits)"""
-        # Check risk limits
+        """Stage 12: Final admissibility check — hard risk gates enforced here."""
         proposal = context.proposal
         if not proposal:
-            return {'admissible': False}
-        
-        # Simple risk check
-        risk_ok = proposal['entry'] - proposal['stop'] < 0.0020  # 20 pips max
-        
-        return {'admissible': risk_ok, 'risk_ok': risk_ok}
+            return {'admissible': False, 'risk_ok': False, 'reason': 'no_proposal'}
+
+        symbol = context.symbol
+        direction = proposal.get('direction', 'buy')
+        # Clamp proposed size to regime max_position_size before risk check
+        rp = context.regime_params or context.adapted_params
+        regime_max = float(rp.max_position_size) if rp and hasattr(rp, 'max_position_size') else 1.0
+        size = min(
+            float(proposal.get('size', self.risk_manager.max_position_size)),
+            self.risk_manager.max_position_size * regime_max
+        )
+        proposal['size'] = size  # Update proposal with clamped size
+        entry = proposal.get('entry', 0.0)
+
+        # Hard stop enforcement via ProductionRiskManager (not advisory)
+        risk_check = self.risk_manager.check_all_limits(
+            symbol=symbol,
+            direction=direction,
+            size=size,
+            price=entry
+        )
+
+        # Persist risk check result on context for scheduler pre-collapse assertion
+        context.risk_check_passed = risk_check.passed
+        context.risk_check_message = risk_check.message
+
+        if not risk_check.passed:
+            logger.warning(f"Risk gate FAILED at Stage 12: {risk_check.message}")
+            return {
+                'admissible': False,
+                'risk_ok': False,
+                'risk_level': risk_check.level.value,
+                'reason': risk_check.message
+            }
+
+        # Secondary geometric check: stop distance sanity
+        stop_dist = abs(entry - proposal.get('stop', entry - 0.0010))
+        if stop_dist > 0.0050:  # 50 pip hard max
+            context.risk_check_passed = False
+            return {
+                'admissible': False,
+                'risk_ok': False,
+                'reason': f'stop_distance_too_large: {stop_dist:.5f}'
+            }
+
+        return {'admissible': True, 'risk_ok': True, 'risk_level': risk_check.level.value}
     
     def _stage_entropy_gate(self, context: PipelineContext) -> Dict:
         """Stage 13: ΔS check - information gain threshold"""
@@ -532,9 +691,20 @@ class PipelineOrchestrator:
         return {'delta_s': delta_s, 'passed': passed}
     
     def _stage_scheduler_collapse(self, context: PipelineContext) -> Dict:
-        """Stage 14: Scheduler authorization (Λ)"""
+        """Stage 15: Scheduler authorization (Λ) — requires prior risk gate passage."""
         from ..kernel.scheduler import CollapseDecision
-        
+
+        # Pre-collapse invariant: risk gate MUST have passed at Stage 12
+        if not getattr(context, 'risk_check_passed', False):
+            logger.error("Collapse attempted without passing risk gate — REFUSED")
+            context.collapse_decision = 'REFUSED'
+            return {
+                'decision': 'REFUSED',
+                'authorized': False,
+                'token': None,
+                'reason': f'risk_gate_not_passed: {context.risk_check_message}'
+            }
+
         # Build trajectory dict for scheduler
         projected = [{
             'id': t['id'],
@@ -542,17 +712,19 @@ class PipelineOrchestrator:
             'action': t.get('action', 1.0),
             'operator_scores': {},
         } for t in context.admissible_paths]
-        
+
+        delta_s = context.action_scores.get('delta_s', 0.3)
+
         decision, token = self.scheduler.authorize_collapse(
             proposal=context.proposal,
             projected_trajectories=projected,
-            delta_s=0.3,
-            constraints_passed=True,
+            delta_s=delta_s,
+            constraints_passed=context.risk_check_passed,
             reconciliation_clear=True
         )
-        
+
         context.collapse_decision = decision.name
-        
+
         return {
             'decision': decision.name,
             'authorized': decision == CollapseDecision.AUTHORIZED,
