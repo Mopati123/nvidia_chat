@@ -287,12 +287,21 @@ class DerivBroker:
             "symbol": order.symbol
         }
         
-        # Get proposal first
+        # Get proposal — retry once with 50% stake if first attempt fails
         response = self._send_request(proposal)
-        
         if not response or 'proposal' not in response:
-            logger.error(f"Proposal failed: {response}")
-            return None
+            reduced_amount = round(order.amount * 0.5, 2)
+            if reduced_amount >= 1.0:
+                logger.warning(
+                    "Proposal failed for amount=%.2f — retrying with %.2f",
+                    order.amount, reduced_amount
+                )
+                proposal['amount'] = reduced_amount
+                order.amount = reduced_amount
+                response = self._send_request(proposal)
+            if not response or 'proposal' not in response:
+                logger.error(f"Proposal failed after size reduction: {response}")
+                return None
         
         # Buy the contract
         proposal_id = response['proposal']['id']

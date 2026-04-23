@@ -99,6 +99,7 @@ class PipelineContext:
     risk_check_message: str = ""
     regime: Optional[Any] = None          # MarketRegime enum from detector
     regime_params: Optional[Any] = None   # RegimeParameters from detector
+    action_weights: Dict = field(default_factory=dict)  # scheduler weights at execution time
 
     # Metadata
     stage_history: List[StageResult] = field(default_factory=list)
@@ -140,6 +141,7 @@ class PipelineOrchestrator:
         """
         self.use_microstructure = use_microstructure
         self.use_weight_learning = use_weight_learning
+        self._paper_mode: bool = True  # set False for live broker execution
 
         # Initialize scheduler
         if scheduler is None:
@@ -301,12 +303,19 @@ class PipelineOrchestrator:
         try:
             output = handler(context)
             duration = (time.time() - start) * 1000
-            
+
+            # Record stage timing for Prometheus metrics
+            try:
+                from trading.observability.metrics import MetricsCollector
+                MetricsCollector.get().record_stage(stage.value, duration)
+            except Exception:
+                pass
+
             # Create checkpoint hash
             import hashlib
             checkpoint_data = f"{stage.value}:{context.symbol}:{context.timestamp}"
             checkpoint_hash = hashlib.sha256(checkpoint_data.encode()).hexdigest()[:16]
-            
+
             return StageResult(
                 stage=stage,
                 success=True,
@@ -314,7 +323,7 @@ class PipelineOrchestrator:
                 duration_ms=duration,
                 checkpoint_hash=checkpoint_hash
             )
-            
+
         except Exception as e:
             duration = (time.time() - start) * 1000
             logger.error(f"Stage {stage.value} failed: {e}")
@@ -583,20 +592,21 @@ class PipelineOrchestrator:
             
             action_comp = UpgradedActionComponents()
             weights = self.scheduler.get_action_weights()
-            
+            context.action_weights = dict(weights)  # snapshot for PPO state vector
+
             microstate = {
                 'ict_geometry': context.ict_geometry,
                 'market_state': context.market_state,
             }
-            
+
             for traj in context.admissible_paths:
                 # Convert path format
                 path = [{'price': p[1], 'ofi': 0.0, 'timestamp': p[0]} for p in traj['path']]
-                
+
                 result = action_comp.compute_full_action(path, microstate, weights)
                 context.action_scores[traj['id']] = result
                 traj['action'] = result['total_action']
-        
+
         return {'actions_computed': len(context.action_scores)}
     
     def _stage_path_integral(self, context: PipelineContext) -> Dict:
@@ -631,18 +641,33 @@ class PipelineOrchestrator:
         """Stage 11: Extract trade proposal from selected path"""
         if context.selected_path is None:
             return {'proposal': None}
-        
-        # Extract entry from first step
-        first_price = context.selected_path['path'][0][1]
-        
+
+        path = context.selected_path['path']
+        first_price = path[0][1]
+        last_price = path[-1][1] if len(path) > 1 else first_price
+
+        # Direction from path slope; fall back to curvature regime
+        if abs(last_price - first_price) > 1e-8:
+            direction = 'buy' if last_price > first_price else 'sell'
+        else:
+            curvature_regime = context.geometry_data.get('regime', 'FLAT')
+            direction = 'buy' if curvature_regime != 'SADDLE' else 'sell'
+
+        if direction == 'buy':
+            stop = first_price - 0.0010
+            target = first_price + 0.0020
+        else:
+            stop = first_price + 0.0010
+            target = first_price - 0.0020
+
         context.proposal = {
-            'direction': 'buy',  # Would determine from structure
+            'direction': direction,
             'entry': first_price,
-            'stop': first_price - 0.0010,
-            'target': first_price + 0.0020,
+            'stop': stop,
+            'target': target,
             'path_id': context.selected_path['id'],
         }
-        
+
         return {'proposal': context.proposal}
     
     def _stage_admissibility_check(self, context: PipelineContext) -> Dict:
@@ -693,6 +718,13 @@ class PipelineOrchestrator:
                 'risk_ok': False,
                 'reason': f'stop_distance_too_large: {stop_dist:.5f}'
             }
+
+        # Compute predicted PnL now that size is finalised
+        entry = proposal['entry']
+        target = proposal.get('target', entry)
+        pip_move = abs(target - entry)
+        predicted_pnl = round(pip_move * proposal['size'] * 10_000, 4)
+        proposal['predicted_pnl'] = predicted_pnl
 
         return {'admissible': True, 'risk_ok': True, 'risk_level': risk_check.level.value}
     
@@ -748,6 +780,12 @@ class PipelineOrchestrator:
         decision, token = result
         context.collapse_decision = decision.name
 
+        try:
+            from trading.observability.metrics import MetricsCollector
+            MetricsCollector.get().record_decision(decision.name)
+        except Exception:
+            pass
+
         return {
             'decision': decision.name,
             'authorized': decision == CollapseDecision.AUTHORIZED,
@@ -755,18 +793,65 @@ class PipelineOrchestrator:
         }
     
     def _stage_execution(self, context: PipelineContext) -> Dict:
-        """Stage 15: Execute trade"""
+        """Stage 16: Execute trade — paper simulation or live broker routing."""
         if context.collapse_decision != 'AUTHORIZED':
             return {'executed': False}
-        
-        # Mock execution
+
+        # Kill switch guard — never route orders when kill switch is active
+        if getattr(self.risk_manager, 'kill_switch_active', False):
+            logger.warning("Stage 16: kill switch active — execution blocked")
+            return {'executed': False, 'reason': 'kill_switch_active'}
+
+        if self._paper_mode:
+            # Paper / demo mode: simulate fill at proposed price
+            context.execution_result = {
+                'order_id': f'ord_{int(time.time())}',
+                'symbol': context.symbol,
+                'entry_price': context.proposal['entry'],
+                'status': 'filled',
+                'realized_pnl': 0.0,
+            }
+            return {'executed': True, 'order': context.execution_result}
+
+        # Live mode: route to broker via SignalRouter
+        try:
+            from trading.brokers.signal_router import SignalRouter, TradingViewSignal
+        except ImportError:
+            logger.error("Stage 16: signal_router not available — falling back to paper")
+            context.execution_result = {
+                'order_id': f'ord_{int(time.time())}',
+                'symbol': context.symbol,
+                'entry_price': context.proposal['entry'],
+                'status': 'filled',
+                'realized_pnl': 0.0,
+            }
+            return {'executed': True, 'order': context.execution_result, 'fallback': True}
+
+        router = getattr(self, '_router', None)
+        if router is None:
+            self._router = SignalRouter()
+            router = self._router
+
+        signal = TradingViewSignal(
+            symbol=context.symbol,
+            action=context.proposal.get('direction', 'buy'),
+            price=context.proposal['entry'],
+            sl=context.proposal.get('stop'),
+            tp=context.proposal.get('target'),
+            volume=context.proposal.get('size', 0.01),
+        )
+        routed = router.route_signal(signal)
+        if routed is None:
+            logger.warning("Stage 16: signal routing failed for %s — no execution", context.symbol)
+            return {'executed': False, 'reason': 'routing_failed'}
+
         context.execution_result = {
-            'order_id': f'ord_{int(time.time())}',
+            'order_id': str(getattr(routed, 'order_id', None) or f'ord_{int(time.time())}'),
             'symbol': context.symbol,
-            'entry_price': context.proposal['entry'],
-            'status': 'filled',
+            'entry_price': getattr(routed, 'fill_price', None) or context.proposal['entry'],
+            'status': getattr(routed, 'status', 'filled'),
+            'realized_pnl': 0.0,
         }
-        
         return {'executed': True, 'order': context.execution_result}
     
     def _stage_reconciliation(self, context: PipelineContext) -> Dict:
@@ -858,14 +943,14 @@ class PipelineOrchestrator:
         else:
             contrib = {'L': 25, 'T': 25, 'E': 25, 'R': 25}
         
-        # Update weights
+        # Update weights — use actual gate results, not hardcoded True
         result = self.scheduler.update_action_weights(
             pnl=pnl,
             delta_s=0.3,
             status=context.reconciliation_status,
             contrib=contrib,
-            constraints_passed=True,
-            evidence_complete=True
+            constraints_passed=getattr(context, 'risk_check_passed', True),
+            evidence_complete=bool(getattr(context, 'evidence_hash', ''))
         )
         
         context.weight_update_result = result

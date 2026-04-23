@@ -18,7 +18,7 @@ import logging
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,27 @@ def release_kill_switch() -> Dict[str, str]:
         from trading.risk.risk_manager import get_risk_manager
         get_risk_manager().release_kill_switch()
         return {"status": "kill_switch_released"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/prometheus", response_class=PlainTextResponse)
+def prometheus_metrics() -> str:
+    """Prometheus-format metrics for all 20 pipeline stages and system state."""
+    try:
+        from trading.observability.metrics import MetricsCollector
+        return MetricsCollector.get().to_prometheus()
+    except Exception as exc:
+        logger.warning("Prometheus metrics unavailable: %s", exc)
+        return "# metrics unavailable\n"
+
+
+@app.get("/metrics/summary", response_class=JSONResponse)
+def metrics_summary() -> Dict[str, Any]:
+    """Stage latency summary and decision counts as JSON."""
+    try:
+        from trading.observability.metrics import MetricsCollector
+        return MetricsCollector.get().summary()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

@@ -284,11 +284,27 @@ class MT5Broker:
             if order.tp:
                 request["tp"] = order.tp
             
-            # Send order
+            # Send order — retry once on transient failures (requote, price change, timeout)
+            _TRANSIENT = {
+                mt5.TRADE_RETCODE_REQUOTE,
+                mt5.TRADE_RETCODE_PRICE_CHANGED,
+                mt5.TRADE_RETCODE_TIMEOUT,
+            }
             result = mt5.order_send(request)
-            
+            if result.retcode in _TRANSIENT:
+                import time as _time
+                logger.warning(
+                    "MT5 transient retcode %d (%s) — single retry after 500ms",
+                    result.retcode, order.symbol
+                )
+                _time.sleep(0.5)
+                result = mt5.order_send(request)
+
             if result.retcode != mt5.TRADE_RETCODE_DONE:
-                logger.error(f"Order failed: {result.retcode}")
+                logger.error(
+                    "MT5 order failed: retcode=%d symbol=%s volume=%.2f",
+                    result.retcode, order.symbol, order.volume
+                )
                 return None
             
             logger.info(f"Order executed: {order.symbol} {order.order_type} "

@@ -62,32 +62,53 @@ class AsyncTickLoop:
 
         self._queue: Optional[asyncio.Queue] = None
         self._latencies: list = []
+        self._last_tick_ts: float = 0.0  # used by stale-tick heartbeat
 
     # ------------------------------------------------------------------
     # Producers
     # ------------------------------------------------------------------
 
+    _RECONNECT_BACKOFF = [1, 2, 4, 8, 16, 30]  # seconds
+
     async def deriv_producer(self, deriv_broker: Any) -> None:
         """
         Poll Deriv broker for new ticks in an executor thread and push to queue.
-        Runs until cancelled.
+        Runs until cancelled. Reconnects with exponential backoff on failure.
         """
         loop = asyncio.get_event_loop()
+        _failures = 0
+
         while True:
             try:
                 tick = await loop.run_in_executor(None, deriv_broker.get_latest_tick)
                 if tick is not None:
                     await self._queue.put(("deriv", tick, time.monotonic()))
+                    _failures = 0  # reset on success
             except Exception as exc:
-                logger.debug("Deriv producer error: %s", exc)
+                _failures += 1
+                delay = self._RECONNECT_BACKOFF[min(_failures - 1, len(self._RECONNECT_BACKOFF) - 1)]
+                logger.warning("Deriv producer error #%d: %s — retry in %ds", _failures, exc, delay)
+                if _failures >= 10:
+                    logger.error("Deriv: %d consecutive failures — attempting reconnect", _failures)
+                    try:
+                        await loop.run_in_executor(None, deriv_broker.disconnect)
+                        await loop.run_in_executor(None, deriv_broker.connect)
+                        _failures = 0
+                        logger.info("Deriv reconnected successfully")
+                    except Exception as re_exc:
+                        logger.error("Deriv reconnect failed: %s", re_exc)
+                await asyncio.sleep(delay)
+                continue
             await asyncio.sleep(self.deriv_poll_interval)
 
     async def mt5_producer(self, mt5_broker: Any, symbol: str) -> None:
         """
         Poll MT5 for current price in an executor thread and push to queue.
-        Runs until cancelled.
+        Runs until cancelled. Reconnects with exponential backoff on failure.
         """
         loop = asyncio.get_event_loop()
+        _failures = 0
+
         while True:
             try:
                 tick = await loop.run_in_executor(
@@ -95,9 +116,33 @@ class AsyncTickLoop:
                 )
                 if tick is not None:
                     await self._queue.put(("mt5", tick, time.monotonic()))
+                    _failures = 0
             except Exception as exc:
-                logger.debug("MT5 producer error: %s", exc)
+                _failures += 1
+                delay = self._RECONNECT_BACKOFF[min(_failures - 1, len(self._RECONNECT_BACKOFF) - 1)]
+                logger.warning("MT5 producer error #%d: %s — retry in %ds", _failures, exc, delay)
+                if _failures >= 10:
+                    logger.error("MT5: %d consecutive failures — attempting reconnect", _failures)
+                    try:
+                        await loop.run_in_executor(None, mt5_broker.connect, 1, 2.0)
+                        _failures = 0
+                        logger.info("MT5 reconnected successfully")
+                    except Exception as re_exc:
+                        logger.error("MT5 reconnect failed: %s", re_exc)
+                await asyncio.sleep(delay)
+                continue
             await asyncio.sleep(self.mt5_poll_interval)
+
+    async def heartbeat(self, stale_seconds: float = 30.0) -> None:
+        """Warn if no tick arrives from any source for longer than stale_seconds."""
+        while True:
+            await asyncio.sleep(stale_seconds)
+            if self._last_tick_ts > 0:
+                gap = time.monotonic() - self._last_tick_ts
+                if gap > stale_seconds:
+                    logger.warning(
+                        "No tick received for %.0fs — possible broker disconnect", gap
+                    )
 
     # ------------------------------------------------------------------
     # Consumer
@@ -113,6 +158,7 @@ class AsyncTickLoop:
 
         while True:
             source, tick, enqueue_time = await self._queue.get()
+            self._last_tick_ts = time.monotonic()
             try:
                 if is_coro:
                     await self.pipeline_fn((source, tick))
@@ -145,7 +191,10 @@ class AsyncTickLoop:
         """
         self._queue = asyncio.Queue(maxsize=self.queue_maxsize)
 
-        tasks = [asyncio.create_task(self.consumer(), name="tick_consumer")]
+        tasks = [
+            asyncio.create_task(self.consumer(), name="tick_consumer"),
+            asyncio.create_task(self.heartbeat(), name="tick_heartbeat"),
+        ]
         if deriv_broker is not None:
             tasks.append(asyncio.create_task(
                 self.deriv_producer(deriv_broker), name="deriv_producer"
@@ -155,7 +204,7 @@ class AsyncTickLoop:
                 self.mt5_producer(mt5_broker, symbol), name="mt5_producer"
             ))
 
-        if len(tasks) == 1:
+        if len(tasks) == 2:  # consumer + heartbeat only, no brokers
             raise ValueError("At least one broker (deriv_broker or mt5_broker) must be provided.")
 
         logger.info("AsyncTickLoop started: %d tasks", len(tasks))

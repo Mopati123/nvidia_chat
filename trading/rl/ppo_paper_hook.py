@@ -77,12 +77,44 @@ class PPOPaperHook:
 
     def _build_state(self, context: "PaperTradeContext") -> np.ndarray:
         """Build 166-dim state vector from paper trade context."""
-        embedding = np.zeros(128, dtype=np.float32)
-        energies = np.zeros(5, dtype=np.float32)
-        actions = np.zeros(5, dtype=np.float32)
-        op_scores = np.zeros(18, dtype=np.float32)
+        # 128-dim market embedding — use memory embedding if available
+        raw_emb = getattr(context, 'memory_embedding', None)
+        if raw_emb is not None:
+            embedding = np.array(raw_emb, dtype=np.float32)
+            if len(embedding) != 128:
+                embedding = np.zeros(128, dtype=np.float32)
+        else:
+            embedding = np.zeros(128, dtype=np.float32)
 
-        pnl_hist = self.agent.recent_pnl[-10:] if self.agent.recent_pnl else []
+        # 5 energies from selected path (S_L, S_T, S_E, S_R, total energy)
+        path = getattr(context, 'selected_path', None) or {}
+        energies = np.array([
+            float(path.get('S_L', 0.0)),
+            float(path.get('S_T', 0.0)),
+            float(path.get('S_E', 0.0)),
+            float(path.get('S_R', 0.0)),
+            float(path.get('energy', 0.0)),
+        ], dtype=np.float32)
+
+        # 5 action weights from scheduler (L, T, E, R, padding)
+        w = getattr(context, 'action_weights', None) or {}
+        actions = np.array([
+            float(w.get('L', 0.5)),
+            float(w.get('T', 0.3)),
+            float(w.get('E', 0.1)),
+            float(w.get('R', 0.1)),
+            0.0,
+        ], dtype=np.float32)
+
+        # 18 operator scores — read from selected_path (embedded via Trajectory.to_dict())
+        # or from explicit operator_scores attr if present
+        op_scores = np.zeros(18, dtype=np.float32)
+        raw_scores = getattr(context, 'operator_scores', None) or path or {}
+        for i, key in enumerate([f'O{j}' for j in range(1, 19)]):
+            op_scores[i] = float(raw_scores.get(key, 0.0))
+
+        # 10-step PnL history
+        pnl_hist = list(self.agent.recent_pnl)[-10:] if self.agent.recent_pnl else []
         pnl_vec = np.zeros(10, dtype=np.float32)
         if pnl_hist:
             pnl_vec[-len(pnl_hist):] = pnl_hist

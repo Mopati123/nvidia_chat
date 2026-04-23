@@ -216,10 +216,21 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                 import threading
                 trade_id = ctx.execution_result.get("order_id", f"t_{int(time.time())}")
 
+                # Carry real pipeline context so PPO state vector is populated
+                _selected_path = getattr(ctx, 'selected_path', {}) or {}
+                _action_weights = getattr(ctx, 'action_weights', {}) or {}
+                # operator_scores are embedded in selected_path via Trajectory.to_dict()
+                _memory_embedding = getattr(ctx, 'memory_embedding', None)
+
                 class _FakeCtx:
                     status = "executed"
                     routed_order = type("r", (), {"symbol": symbol})()
                     entry_time = time.time()
+                    selected_path = _selected_path
+                    action_weights = _action_weights
+                    # Pass selected_path as operator_scores so O1-O18 keys are readable
+                    operator_scores = _selected_path
+                    memory_embedding = _memory_embedding
 
                 ppo_hook.on_trade_executed(_FakeCtx())
 
@@ -279,7 +290,9 @@ def main():
     try:
         from trading.pipeline.orchestrator import PipelineOrchestrator
         orch = PipelineOrchestrator()
-        logger.info("Pipeline orchestrator ready")
+        # Paper mode by default; set False when real broker orders should be placed
+        orch._paper_mode = (args.mode == "paper")
+        logger.info("Pipeline orchestrator ready (paper_mode=%s)", orch._paper_mode)
     except Exception as exc:
         logger.error("Failed to init orchestrator: %s", exc)
         sys.exit(1)
