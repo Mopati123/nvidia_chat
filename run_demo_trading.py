@@ -314,7 +314,10 @@ def main():
             deriv_broker = DerivBroker()
             if deriv_broker.connect():
                 deriv_ok = True
-                logger.info("Deriv demo connected")
+                # Deriv symbol for forex: frxEURUSD, frxGBPUSD, etc.
+                deriv_symbol = "frx" + args.symbol if not args.symbol.startswith("frx") else args.symbol
+                deriv_broker.subscribe_ticks(deriv_symbol)
+                logger.info("Deriv demo connected — subscribed to %s", deriv_symbol)
             else:
                 logger.warning("Deriv connection failed — check DERIV_API_TOKEN")
         except Exception as exc:

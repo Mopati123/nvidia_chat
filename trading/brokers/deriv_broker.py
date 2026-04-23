@@ -242,7 +242,15 @@ class DerivBroker:
             "ticks": symbol,
             "subscribe": 1
         })
-    
+
+    def get_latest_tick(self) -> Optional[Dict]:
+        """Return the most recently received tick from any subscription."""
+        if not self.price_cache:
+            return None
+        symbol = next(iter(self.price_cache))
+        entry = self.price_cache[symbol]
+        return {"symbol": symbol, "price": entry["price"], "epoch": entry.get("epoch")}
+
     def get_current_price(self, symbol: str) -> Optional[float]:
         """Get current price (requires subscription first)"""
         if symbol in self.price_cache:
