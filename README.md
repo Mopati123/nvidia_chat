@@ -19,6 +19,17 @@ Instead of simple indicators (RSI, MACD), this system:
 
 ---
 
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Architecture Guide](docs/ARCHITECTURE.md) | System design — physics core, 20-stage pipeline, manifold geometry |
+| [API Reference](docs/API.md) | Complete class and method reference for all modules |
+| [Tutorials](docs/TUTORIAL.md) | Step-by-step guides: paper trading, dashboard, Telegram bot, brokers |
+| [Examples](docs/examples/README.md) | Working Python code snippets |
+
+---
+
 ## Architecture
 
 ```
