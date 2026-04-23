@@ -5,6 +5,7 @@ Real trading via MT5 terminal
 Supports demo and live accounts
 """
 
+import os
 import MetaTrader5 as mt5
 import logging
 from typing import Dict, Optional, List, Tuple
@@ -49,12 +50,13 @@ class MT5Broker:
     Requires MT5 terminal running locally or via Wine on Linux/Mac
     """
     
-    def __init__(self, account: Optional[int] = None, 
+    def __init__(self, account: Optional[int] = None,
                  password: Optional[str] = None,
                  server: Optional[str] = None):
-        self.account = account
-        self.password = password
-        self.server = server
+        _env_acct = os.getenv("MT5_ACCOUNT_ID", "")
+        self.account  = account  or (int(_env_acct) if _env_acct.isdigit() else None)
+        self.password = password or os.getenv("MT5_PASSWORD")
+        self.server   = server   or os.getenv("MT5_SERVER")
         self.connected = False
         
     def connect(self, max_retries: int = 5, retry_delay: float = 3.0) -> bool:

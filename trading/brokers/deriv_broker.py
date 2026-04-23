@@ -8,6 +8,7 @@ Supports forex, crypto, synthetic indices, volatility indices
 import asyncio
 import json
 import logging
+import os
 import websocket
 import threading
 from typing import Dict, Optional, List, Callable
@@ -40,7 +41,7 @@ class DerivBroker:
     WEBSOCKET_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089"
     
     def __init__(self, api_token: Optional[str] = None):
-        self.api_token = api_token
+        self.api_token = api_token or os.getenv("DERIV_API_TOKEN")
         self.ws = None
         self.connected = False
         self.authorized = False
