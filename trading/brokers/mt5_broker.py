@@ -43,6 +43,16 @@ class MT5Position:
     open_time: datetime
 
 
+def _filling_mode(symbol_info) -> int:
+    """Return the first filling mode supported by the symbol (FOK > IOC > RETURN)."""
+    fm = getattr(symbol_info, "filling_mode", 0)
+    if fm & 1:
+        return mt5.ORDER_FILLING_FOK
+    if fm & 2:
+        return mt5.ORDER_FILLING_IOC
+    return mt5.ORDER_FILLING_RETURN
+
+
 class MT5Broker:
     """
     MetaTrader 5 broker integration
@@ -296,9 +306,9 @@ class MT5Broker:
                 "magic": order.magic,
                 "comment": order.comment,
                 "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
+                "type_filling": _filling_mode(symbol_info),
             }
-            
+
             # Add SL/TP if provided
             if order.sl:
                 request["sl"] = order.sl
@@ -404,9 +414,9 @@ class MT5Broker:
                 "magic": 0,
                 "comment": "ApexQuantumICT close",
                 "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
+                "type_filling": _filling_mode(mt5.symbol_info(pos.symbol)),
             }
-            
+
             result = mt5.order_send(request)
             return result.retcode == mt5.TRADE_RETCODE_DONE
             
