@@ -455,10 +455,15 @@ class MT5Broker:
     
     def get_current_price(self, symbol: str) -> Optional[float]:
         """Return current bid price for symbol (used by AsyncTickLoop producer)."""
-        if not self.connected:
+        if not self.connected and mt5.account_info() is None:
             return None
         try:
             tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                for suffix in ('_r', 'm', '.', '_micro', '_pro', '_ecn'):
+                    tick = mt5.symbol_info_tick(symbol + suffix)
+                    if tick is not None:
+                        break
             return float(tick.bid) if tick else None
         except Exception:
             return None
