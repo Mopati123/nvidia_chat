@@ -27,8 +27,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import logging
 import os
+import pathlib
+import signal
 import sys
 import time
 from collections import deque
@@ -165,12 +168,28 @@ class SessionStats:
 # ---------------------------------------------------------------------------
 
 def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
-                            stats: SessionStats, symbol: str, mode: str):
+                            stats: SessionStats, symbol: str, mode: str,
+                            csv_writer=None, csv_file=None,
+                            live_mode: bool = False, mt5_broker_ref=None,
+                            start_equity: float = 0.0, max_loss: float = 20.0):
     """Returns the function passed to AsyncTickLoop as pipeline_fn."""
 
     def handle_tick(source_tick: Tuple[str, Any]) -> None:
         source, tick = source_tick
         stats.tick()
+
+        # Equity safety stop — check every 20 ticks to avoid hammering the broker API
+        if live_mode and mt5_broker_ref and stats.ticks_received % 20 == 0 and start_equity > 0:
+            acct = mt5_broker_ref.get_account_info()
+            if acct:
+                session_loss = start_equity - acct.get("equity", start_equity)
+                if session_loss >= max_loss:
+                    logger.error(
+                        "EQUITY SAFETY STOP — session loss $%.2f >= limit $%.0f. Shutting down.",
+                        session_loss, max_loss,
+                    )
+                    os.kill(os.getpid(), signal.SIGINT)
+                    return
 
         # Extract price from tick (Deriv dict or MT5 float)
         if isinstance(tick, dict):
@@ -209,6 +228,26 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                 p.get("target", 0), p.get("size", 0),
                 p.get("predicted_pnl", 0),
             )
+
+            # Log trade to CSV
+            if csv_writer:
+                ticket = "paper"
+                if hasattr(ctx, "execution_result") and ctx.execution_result:
+                    ticket = ctx.execution_result.get("order_id", "paper")
+                csv_writer.writerow({
+                    "time": datetime.now().isoformat(),
+                    "symbol": symbol,
+                    "direction": p.get("direction", ""),
+                    "entry": p.get("entry", 0),
+                    "stop": p.get("stop", 0),
+                    "target": p.get("target", 0),
+                    "size": p.get("size", 0),
+                    "ticket": ticket,
+                    "predicted_pnl": p.get("predicted_pnl", 0),
+                    "source": source,
+                })
+                if csv_file:
+                    csv_file.flush()
 
             # Simulate close after 60 s with a small random PnL for PPO
             if ppo_hook and hasattr(ctx, "execution_result") and ctx.execution_result:
@@ -275,11 +314,19 @@ def main():
         choices=["paper", "deriv", "mt5", "both"],
         help="Broker mode: paper (simulated), deriv, mt5, both (default: both)"
     )
+    parser.add_argument("--live-demo", action="store_true",
+                        help="Place real orders on demo account (default: paper signals only)")
+    parser.add_argument("--lot-size", type=float, default=0.01,
+                        help="Position size in lots for live-demo mode (default: 0.01)")
+    parser.add_argument("--max-loss", type=float, default=20.0,
+                        help="Session equity drawdown limit in USD before auto-stop (default: $20)")
     args = parser.parse_args()
 
     print("=" * 60)
     print("  ApexQuantumICT — Live Demo Trading")
     print(f"  Symbol: {args.symbol}  |  Mode: {args.mode.upper()}")
+    if args.live_demo:
+        print(f"  LIVE DEMO: real orders | lot={args.lot_size} | max-loss=${args.max_loss}")
     print(f"  Started: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print("=" * 60)
 
@@ -290,10 +337,8 @@ def main():
     try:
         from trading.pipeline.orchestrator import PipelineOrchestrator
         orch = PipelineOrchestrator()
-        # Always paper mode in demo: mode controls tick source, not order placement.
-        # Real order routing requires explicit --live flag (see run_live_trading.py).
-        orch._paper_mode = True
-        logger.info("Pipeline orchestrator ready (paper_mode=True)")
+        # paper_mode is set after broker connection (needs mt5_ok + --live-demo flag)
+        logger.info("Pipeline orchestrator initialised")
     except Exception as exc:
         logger.error("Failed to init orchestrator: %s", exc)
         sys.exit(1)
@@ -361,14 +406,43 @@ def main():
         )
         args.mode = "paper"
 
+    # Set paper_mode: live-demo + MT5 connected = real orders; everything else = paper
+    live_mode = args.live_demo and mt5_ok
+    orch._paper_mode = not live_mode
+    logger.info("Pipeline paper_mode=%s%s", orch._paper_mode,
+                " (LIVE DEMO — real orders)" if live_mode else "")
+
+    # Live-demo setup: sync singleton so Stage 16 can call place_order, capture start equity
+    start_equity: float = 0.0
+    if live_mode:
+        from trading.brokers.mt5_broker import mt5_broker as _mt5_singleton
+        _mt5_singleton.connected = True          # Stage 16 checks this flag
+        os.environ["MAX_POSITION_SIZE"] = str(args.lot_size)
+        acct = mt5_broker.get_account_info()
+        start_equity = acct.get("equity", 0.0) if acct else 0.0
+        logger.info("LIVE DEMO ready — lot=%.2f | start equity=$%.2f | session loss limit=$%.0f",
+                    args.lot_size, start_equity, args.max_loss)
+
     # ------------------------------------------------------------------
-    # 4. Build tick accumulator + pipeline handler
+    # 4. CSV trade log + tick accumulator + pipeline handler
     # ------------------------------------------------------------------
+    _log_path = pathlib.Path(f"demo_trades_{datetime.now().strftime('%Y%m%d_%H%M')}.csv")
+    _csv_file = open(_log_path, "w", newline="")
+    _writer = csv.DictWriter(_csv_file, fieldnames=[
+        "time", "symbol", "direction", "entry", "stop", "target",
+        "size", "ticket", "predicted_pnl", "source",
+    ])
+    _writer.writeheader()
+    logger.info("Trade log: %s", _log_path)
+
     accumulator = TickAccumulator(window=20, pipeline_interval=5.0, min_ticks=10)
     stats = SessionStats()
 
     pipeline_fn = build_pipeline_handler(
-        orch, ppo_hook, accumulator, stats, args.symbol, args.mode
+        orch, ppo_hook, accumulator, stats, args.symbol, args.mode,
+        csv_writer=_writer, csv_file=_csv_file,
+        live_mode=live_mode, mt5_broker_ref=mt5_broker if live_mode else None,
+        start_equity=start_equity, max_loss=args.max_loss,
     )
 
     # ------------------------------------------------------------------
@@ -439,6 +513,12 @@ def main():
             mt5_broker.disconnect()
         except Exception:
             pass
+
+    try:
+        _csv_file.close()
+        logger.info("Trade log saved: %s", _log_path)
+    except Exception:
+        pass
 
     print("\n" + "=" * 60)
     stats.print_status(orch, ppo_agent, deriv_ok, mt5_ok)

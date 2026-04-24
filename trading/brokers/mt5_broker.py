@@ -243,10 +243,11 @@ class MT5Broker:
         
         Returns order result or None if failed
         """
-        if not self.connected:
+        # Accept if this instance connected, or any live MT5 session is active in this process
+        if not self.connected and mt5.account_info() is None:
             logger.error("MT5 not connected")
             return None
-        
+
         try:
             # Resolve broker-specific symbol suffix (e.g. EURUSD_r, EURUSDm, EURUSD.)
             resolved = order.symbol
