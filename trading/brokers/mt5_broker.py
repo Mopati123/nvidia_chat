@@ -238,6 +238,27 @@ class MT5Broker:
             return None
         
         try:
+            # Resolve broker-specific symbol suffix (e.g. EURUSD_r, EURUSDm, EURUSD.)
+            resolved = order.symbol
+            if mt5.symbol_info(resolved) is None:
+                for suffix in ('_r', 'm', '.', '_micro', '_pro', '_ecn'):
+                    candidate = order.symbol + suffix
+                    if mt5.symbol_info(candidate) is not None:
+                        logger.info("MT5 symbol resolved: %s → %s", order.symbol, candidate)
+                        resolved = candidate
+                        break
+            order = MT5Order(
+                symbol=resolved,
+                order_type=order.order_type,
+                volume=order.volume,
+                price=order.price,
+                sl=order.sl,
+                tp=order.tp,
+                deviation=order.deviation,
+                magic=order.magic,
+                comment=order.comment,
+            )
+
             # Get symbol info
             symbol_info = mt5.symbol_info(order.symbol)
             if symbol_info is None:
@@ -301,10 +322,17 @@ class MT5Broker:
                 result = mt5.order_send(request)
 
             if result.retcode != mt5.TRADE_RETCODE_DONE:
-                logger.error(
-                    "MT5 order failed: retcode=%d symbol=%s volume=%.2f",
-                    result.retcode, order.symbol, order.volume
-                )
+                if result.retcode == 10027:
+                    logger.error(
+                        "MT5 AutoTrading DISABLED (retcode=10027) — "
+                        "enable it in MetaTrader: Tools → Options → Expert Advisors "
+                        "→ 'Allow automated trading', or click the AutoTrading toolbar button"
+                    )
+                else:
+                    logger.error(
+                        "MT5 order failed: retcode=%d symbol=%s volume=%.2f",
+                        result.retcode, order.symbol, order.volume
+                    )
                 return None
             
             logger.info(f"Order executed: {order.symbol} {order.order_type} "
@@ -414,6 +442,16 @@ class MT5Broker:
             logger.error(f"Failed to get symbols: {e}")
             return []
     
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """Return current bid price for symbol (used by AsyncTickLoop producer)."""
+        if not self.connected:
+            return None
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            return float(tick.bid) if tick else None
+        except Exception:
+            return None
+
     def get_symbol_info(self, symbol: str) -> Optional[Dict]:
         """Get detailed symbol information from MT5"""
         if not self.connected:

@@ -824,43 +824,61 @@ class PipelineOrchestrator:
             }
             return {'executed': True, 'order': context.execution_result}
 
-        # Live mode: route to broker via SignalRouter
-        try:
-            from trading.brokers.signal_router import SignalRouter, TradingViewSignal
-        except ImportError:
-            logger.error("Stage 16: signal_router not available — falling back to paper")
-            context.execution_result = {
-                'order_id': f'ord_{int(time.time())}',
-                'symbol': context.symbol,
-                'entry_price': context.proposal['entry'],
-                'status': 'filled',
-                'realized_pnl': 0.0,
-            }
-            return {'executed': True, 'order': context.execution_result, 'fallback': True}
+        # Live mode: place market order directly on MT5 (Deriv fallback not yet supported)
+        from trading.brokers.mt5_broker import MT5Broker, MT5Order, mt5_broker as _mt5
+        from trading.brokers.deriv_broker import DerivBroker, DerivOrder, deriv_broker as _deriv
 
-        router = getattr(self, '_router', None)
-        if router is None:
-            self._router = SignalRouter()
-            router = self._router
+        direction = context.proposal.get('direction', 'buy')
+        entry     = context.proposal['entry']
+        size      = context.proposal.get('size', 0.01)
+        stop      = context.proposal.get('stop')
+        target    = context.proposal.get('target')
 
-        signal = TradingViewSignal(
-            symbol=context.symbol,
-            action=context.proposal.get('direction', 'buy'),
-            price=context.proposal['entry'],
-            sl=context.proposal.get('stop'),
-            tp=context.proposal.get('target'),
-            volume=context.proposal.get('size', 0.01),
-        )
-        routed = router.route_signal(signal)
-        if routed is None:
-            logger.warning("Stage 16: signal routing failed for %s — no execution", context.symbol)
-            return {'executed': False, 'reason': 'routing_failed'}
+        result = None
+
+        # --- MT5 ---
+        if _mt5.connected:
+            mt5_order = MT5Order(
+                symbol=context.symbol,
+                order_type=direction,
+                volume=size,
+                sl=stop,
+                tp=target,
+                comment='ApexQuantumICT',
+            )
+            result = _mt5.place_order(mt5_order)
+            if result:
+                logger.info(
+                    "Stage 16: MT5 order placed ticket=%s %s %s size=%.2f",
+                    result.get('ticket'), direction.upper(), context.symbol, size
+                )
+
+        # --- Deriv fallback ---
+        if result is None and _deriv.connected:
+            contract_type = 'CALL' if direction == 'buy' else 'PUT'
+            d_order = DerivOrder(
+                symbol='frx' + context.symbol if not context.symbol.startswith('frx') else context.symbol,
+                contract_type=contract_type,
+                duration=5,
+                duration_unit='m',
+                amount=max(round(size * 100, 2), 1.0),
+            )
+            result = _deriv.place_contract(d_order)
+            if result:
+                logger.info(
+                    "Stage 16: Deriv contract placed %s %s size=%.2f",
+                    contract_type, context.symbol, size
+                )
+
+        if result is None:
+            logger.error("Stage 16: no broker available for live execution — order not placed")
+            return {'executed': False, 'reason': 'no_broker'}
 
         context.execution_result = {
-            'order_id': str(getattr(routed, 'order_id', None) or f'ord_{int(time.time())}'),
-            'symbol': context.symbol,
-            'entry_price': getattr(routed, 'fill_price', None) or context.proposal['entry'],
-            'status': getattr(routed, 'status', 'filled'),
+            'order_id':    str(result.get('ticket') or result.get('contract_id') or f'ord_{int(time.time())}'),
+            'symbol':      context.symbol,
+            'entry_price': float(result.get('price', entry)),
+            'status':      'filled',
             'realized_pnl': 0.0,
         }
         return {'executed': True, 'order': context.execution_result}

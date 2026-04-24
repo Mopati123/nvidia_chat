@@ -290,9 +290,10 @@ def main():
     try:
         from trading.pipeline.orchestrator import PipelineOrchestrator
         orch = PipelineOrchestrator()
-        # Paper mode by default; set False when real broker orders should be placed
-        orch._paper_mode = (args.mode == "paper")
-        logger.info("Pipeline orchestrator ready (paper_mode=%s)", orch._paper_mode)
+        # Always paper mode in demo: mode controls tick source, not order placement.
+        # Real order routing requires explicit --live flag (see run_live_trading.py).
+        orch._paper_mode = True
+        logger.info("Pipeline orchestrator ready (paper_mode=True)")
     except Exception as exc:
         logger.error("Failed to init orchestrator: %s", exc)
         sys.exit(1)
