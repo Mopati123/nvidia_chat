@@ -171,8 +171,12 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                             stats: SessionStats, symbol: str, mode: str,
                             csv_writer=None, csv_file=None,
                             live_mode: bool = False, mt5_broker_ref=None,
-                            start_equity: float = 0.0, max_loss: float = 20.0):
+                            start_equity: float = 0.0, max_loss: float = 20.0,
+                            trade_cooldown: float = 300.0):
     """Returns the function passed to AsyncTickLoop as pipeline_fn."""
+    import MetaTrader5 as _mt5_api
+
+    _last_trade_time = [0.0]  # mutable so inner function can update it
 
     def handle_tick(source_tick: Tuple[str, Any]) -> None:
         source, tick = source_tick
@@ -206,6 +210,15 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
 
         if not accumulator.ready():
             return
+
+        # Live mode gates: skip pipeline if an open position exists or cooldown active
+        if live_mode:
+            if (time.time() - _last_trade_time[0]) < trade_cooldown:
+                return  # within cooldown window
+            open_positions = _mt5_api.positions_get()
+            if open_positions and len(open_positions) > 0:
+                logger.debug("Skipping pipeline — %d position(s) already open", len(open_positions))
+                return
 
         accumulator.mark_run()
         raw_data = accumulator.to_ohlcv()
@@ -248,6 +261,10 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                 })
                 if csv_file:
                     csv_file.flush()
+
+            # Record trade time for cooldown
+            if live_mode and hasattr(ctx, "execution_result") and ctx.execution_result:
+                _last_trade_time[0] = time.time()
 
             # Simulate close after 60 s with a small random PnL for PPO
             if ppo_hook and hasattr(ctx, "execution_result") and ctx.execution_result:
@@ -338,6 +355,10 @@ def main():
         from trading.pipeline.orchestrator import PipelineOrchestrator
         orch = PipelineOrchestrator()
         # paper_mode is set after broker connection (needs mt5_ok + --live-demo flag)
+        # Apply lot size directly to risk manager NOW (env var set after init has no effect)
+        if args.live_demo:
+            orch.risk_manager.max_position_size = args.lot_size
+            logger.info("Risk manager: max_position_size set to %.2f lots", args.lot_size)
         logger.info("Pipeline orchestrator initialised")
     except Exception as exc:
         logger.error("Failed to init orchestrator: %s", exc)
@@ -435,7 +456,9 @@ def main():
     _writer.writeheader()
     logger.info("Trade log: %s", _log_path)
 
-    accumulator = TickAccumulator(window=20, pipeline_interval=5.0, min_ticks=10)
+    # In live mode: longer pipeline interval (60s) to avoid over-trading on micro-movements
+    _pipeline_interval = 60.0 if live_mode else 5.0
+    accumulator = TickAccumulator(window=20, pipeline_interval=_pipeline_interval, min_ticks=10)
     stats = SessionStats()
 
     pipeline_fn = build_pipeline_handler(
@@ -443,6 +466,7 @@ def main():
         csv_writer=_writer, csv_file=_csv_file,
         live_mode=live_mode, mt5_broker_ref=mt5_broker if live_mode else None,
         start_equity=start_equity, max_loss=args.max_loss,
+        trade_cooldown=300.0,  # 5 min minimum between trades in live mode
     )
 
     # ------------------------------------------------------------------
