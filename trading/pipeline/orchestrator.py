@@ -646,25 +646,36 @@ class PipelineOrchestrator:
         first_price = path[0][1]
         last_price = path[-1][1] if len(path) > 1 else first_price
 
-        # Direction from path slope; fall back to curvature regime
+        # Direction: contrarian to path slope.
+        # The least-action geodesic follows the path price has already taken;
+        # selecting the OPPOSITE direction exploits mean-reversion — price that
+        # has moved far from equilibrium tends to revert.
+        # Curvature fallback: SADDLE = unstable node → fade the move (sell).
         if abs(last_price - first_price) > 1e-8:
-            direction = 'buy' if last_price > first_price else 'sell'
+            direction = 'sell' if last_price > first_price else 'buy'
         else:
             curvature_regime = context.geometry_data.get('regime', 'FLAT')
-            direction = 'buy' if curvature_regime != 'SADDLE' else 'sell'
+            direction = 'sell' if curvature_regime != 'SADDLE' else 'buy'
+
+        # Anchor entry to actual market price (last close in OHLCV window).
+        # Trajectory path coordinates live in Riemannian space and are NOT
+        # directly comparable to broker prices — using them as entry/stop/target
+        # would produce nonsense levels relative to real bars.
+        closes = context.raw_data.get('close', [])
+        entry  = float(closes[-1]) if closes else first_price
 
         if direction == 'buy':
-            stop = first_price - 0.0010
-            target = first_price + 0.0020
+            stop   = entry - 0.0010
+            target = entry + 0.0020
         else:
-            stop = first_price + 0.0010
-            target = first_price - 0.0020
+            stop   = entry + 0.0010
+            target = entry - 0.0020
 
         context.proposal = {
             'direction': direction,
-            'entry': first_price,
-            'stop': stop,
-            'target': target,
+            'entry':   entry,
+            'stop':    stop,
+            'target':  target,
             'path_id': context.selected_path['id'],
         }
 
