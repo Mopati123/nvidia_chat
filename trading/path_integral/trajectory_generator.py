@@ -202,7 +202,8 @@ class LeastActionGenerator:
                               market_hamiltonian: Dict[str, float],
                               operator_registry,
                               christoffel_func=None,
-                              regime: Optional[str] = None) -> List[Trajectory]:
+                              regime: Optional[str] = None,
+                              hbar_override: Optional[float] = None) -> List[Trajectory]:
         """
         Generate candidate trajectory family via RK4 integration.
 
@@ -213,7 +214,15 @@ class LeastActionGenerator:
             christoffel_func: Optional Γ(price, time) -> ChristoffelSymbols.
                 When provided enables T2-A geodesic velocity seeds and
                 T2-B time-varying gradient force.
+            hbar_override: If provided, overrides self.epsilon (ℏ) for this call only.
         """
+        # ℏ: use override if provided, else fall back to instance default
+        epsilon = hbar_override if hbar_override is not None else self.epsilon
+
+        # Performance caps: N ≤ 500 paths, T ≤ 30 steps
+        n_trajectories = min(self.n_trajectories, 500)
+        n_steps        = min(self.n_steps, 30)
+
         price = initial_state.get("price", 100.0)
         t0 = 0.0
         base_velocity = initial_state.get("velocity", 0.0)
@@ -223,8 +232,11 @@ class LeastActionGenerator:
             perturbations = self._geodesic_velocity_seeds(
                 price, t0, base_velocity, christoffel_func
             )
+            perturbations = perturbations[:n_trajectories]
         else:
-            perturbations = list(np.linspace(-0.02, 0.02, self.n_trajectories))
+            perturbations = list(np.linspace(-0.02, 0.02, n_trajectories))
+
+        _ = epsilon  # ℏ available for future amplitude weighting; unused if caller handles it
 
         trajectories = []
         for i, pert in enumerate(perturbations):

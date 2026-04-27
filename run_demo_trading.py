@@ -175,6 +175,7 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                             trade_cooldown: float = 300.0):
     """Returns the function passed to AsyncTickLoop as pipeline_fn."""
     import MetaTrader5 as _mt5_api
+    from trading.brokers.mt5_broker import mt5_position_tracker as _tracker
 
     _last_trade_time = [0.0]  # mutable so inner function can update it
 
@@ -266,42 +267,47 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
             if live_mode and hasattr(ctx, "execution_result") and ctx.execution_result:
                 _last_trade_time[0] = time.time()
 
-            # Simulate close after 60 s with a small random PnL for PPO
+            # Register position with MT5 close tracker — real PnL feeds PPO on close
             if ppo_hook and hasattr(ctx, "execution_result") and ctx.execution_result:
-                import random
-                import threading
-                trade_id = ctx.execution_result.get("order_id", f"t_{int(time.time())}")
+                import threading as _threading
+                trade_id  = ctx.execution_result.get("order_id", f"t_{int(time.time())}")
+                predicted = p.get("predicted_pnl", 10.0)
 
-                # Carry real pipeline context so PPO state vector is populated
-                _selected_path = getattr(ctx, 'selected_path', {}) or {}
-                _action_weights = getattr(ctx, 'action_weights', {}) or {}
-                # operator_scores are embedded in selected_path via Trajectory.to_dict()
+                _selected_path    = getattr(ctx, 'selected_path', {}) or {}
+                _action_weights   = getattr(ctx, 'action_weights', {}) or {}
                 _memory_embedding = getattr(ctx, 'memory_embedding', None)
 
                 class _FakeCtx:
-                    status = "executed"
-                    routed_order = type("r", (), {"symbol": symbol})()
-                    entry_time = time.time()
+                    status        = "executed"
+                    routed_order  = type("r", (), {"symbol": symbol})()
+                    entry_time    = time.time()
                     selected_path = _selected_path
                     action_weights = _action_weights
-                    # Pass selected_path as operator_scores so O1-O18 keys are readable
-                    operator_scores = _selected_path
+                    operator_scores = _selected_path   # O1–O18 embedded in selected_path
                     memory_embedding = _memory_embedding
 
                 ppo_hook.on_trade_executed(_FakeCtx())
 
-                def _close_later(tid, predicted):
-                    time.sleep(60)
-                    realized = predicted * random.uniform(0.7, 1.3)
+                def _ppo_callback(tid: str, realized: float) -> None:
                     ppo_hook.on_trade_closed(tid, realized)
                     stats.ppo_update()
                     logger.info("PPO updated | trade %s | realized $%.2f", tid, realized)
 
-                threading.Thread(
-                    target=_close_later,
-                    args=(trade_id, p.get("predicted_pnl", 10.0)),
-                    daemon=True,
-                ).start()
+                if live_mode and mt5_broker_ref is not None:
+                    try:
+                        ticket_int = int(ctx.execution_result.get("order_id", ""))
+                        _tracker.track(ticket_int, trade_id, _ppo_callback,
+                                       predicted_pnl=predicted)
+                    except (ValueError, TypeError):
+                        # Non-numeric ID (Deriv contract) — fall back to instant callback
+                        _threading.Thread(
+                            target=_ppo_callback, args=(trade_id, predicted), daemon=True
+                        ).start()
+                else:
+                    # Paper mode: fire immediately with predicted PnL
+                    _threading.Thread(
+                        target=_ppo_callback, args=(trade_id, predicted), daemon=True
+                    ).start()
         else:
             logger.debug("Pipeline REFUSED: %s", symbol)
 
@@ -411,6 +417,9 @@ def main():
             if mt5_broker.connect(max_retries=3, retry_delay=2.0):
                 mt5_ok = True
                 logger.info("MT5 demo connected")
+                from trading.brokers.mt5_broker import mt5_position_tracker as _tracker
+                _tracker.start()
+                logger.info("MT5 position close tracker started")
             else:
                 logger.warning("MT5 connection failed — check MT5_ACCOUNT_ID / MT5_PASSWORD / MT5_SERVER")
         except Exception as exc:

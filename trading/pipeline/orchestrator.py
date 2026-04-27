@@ -559,6 +559,10 @@ class PipelineOrchestrator:
                 for i in range(n_trajectories)
             ]
 
+        # Store ℏ and trajectory count on context for evidence block in Stage 11
+        context._epsilon = epsilon
+        context._num_trajectories = len(context.trajectories)
+
         return {
             'trajectories_generated': len(context.trajectories),
             'epsilon': epsilon,
@@ -638,7 +642,7 @@ class PipelineOrchestrator:
         return {'selected_id': best['id'], 'action': best.get('action', 0)}
     
     def _stage_proposal_generation(self, context: PipelineContext) -> Dict:
-        """Stage 11: Extract trade proposal from selected path"""
+        """Stage 11: Extract trade proposal from selected path (curvature-adaptive)."""
         if context.selected_path is None:
             return {'proposal': None}
 
@@ -646,46 +650,163 @@ class PipelineOrchestrator:
         first_price = path[0][1]
         last_price = path[-1][1] if len(path) > 1 else first_price
 
-        # Direction: contrarian to path slope.
-        # The least-action geodesic follows the path price has already taken;
-        # selecting the OPPOSITE direction exploits mean-reversion — price that
-        # has moved far from equilibrium tends to revert.
-        # Curvature fallback: SADDLE = unstable node → fade the move (sell).
-        if abs(last_price - first_price) > 1e-8:
-            direction = 'sell' if last_price > first_price else 'buy'
-        else:
-            curvature_regime = context.geometry_data.get('regime', 'FLAT')
-            direction = 'sell' if curvature_regime != 'SADDLE' else 'buy'
-
-        # Anchor entry to actual market price (last close in OHLCV window).
-        # Trajectory path coordinates live in Riemannian space and are NOT
-        # directly comparable to broker prices — using them as entry/stop/target
-        # would produce nonsense levels relative to real bars.
+        # Anchor entry to actual market price — trajectory coords are Riemannian,
+        # not directly comparable to broker prices.
         closes = context.raw_data.get('close', [])
         entry  = float(closes[-1]) if closes else first_price
 
-        if direction == 'buy':
-            stop   = entry - 0.0010
-            target = entry + 0.0020
+        # --- Curvature extraction ---
+        curvature_data = context.geometry_data.get('curvature', {})
+        if isinstance(curvature_data, dict):
+            K = float(
+                curvature_data.get('gaussian_curvature')
+                or curvature_data.get('K')
+                or curvature_data.get('scalar_curvature')
+                or curvature_data.get('curvature_value')
+                or 0.0
+            )
         else:
-            stop   = entry + 0.0010
-            target = entry - 0.0020
+            K = 0.0
+        regime = context.geometry_data.get('regime', 'FLAT')
+
+        # --- Direction: regime-gated ---
+        path_moved   = abs(last_price - first_price) > 1e-8
+        path_went_up = (last_price - first_price) > 1e-8
+
+        if not path_moved:
+            direction = 'sell' if regime != 'SADDLE' else 'buy'
+        elif K < -0.05:
+            # Negative curvature (hyperbolic/saddle): breakout regime — follow the path
+            direction = 'buy' if path_went_up else 'sell'
+        else:
+            # Flat / positive curvature: mean-reversion — contrarian to path
+            direction = 'sell' if path_went_up else 'buy'
+
+        # --- Curvature-adaptive stop/target (2:1 R:R always) ---
+        K_abs = abs(K)
+        stop_mult     = min(1.0 + K_abs, 2.0)   # K=0→1.0×, K=0.5→1.5×, cap 2.0×
+        base_stop_pips = 0.0010                   # 10 pip base
+        stop_pips   = base_stop_pips * stop_mult
+        target_pips = stop_pips * 2.0             # 2:1 R:R
+
+        if direction == 'buy':
+            stop   = entry - stop_pips
+            target = entry + target_pips
+        else:
+            stop   = entry + stop_pips
+            target = entry - target_pips
+
+        # --- Sailing ladder: FVG-indexed lot sizing ---
+        fvgs = (context.ict_geometry or {}).get('fvgs', [])
+        fvg_index = min(len(fvgs), 3)
+        _SAILING_LADDER = {0: 0.01, 1: 0.01, 2: 0.1, 3: 1.0}
+        proposed_size = _SAILING_LADDER[fvg_index]
 
         context.proposal = {
             'direction': direction,
-            'entry':   entry,
-            'stop':    stop,
-            'target':  target,
-            'path_id': context.selected_path['id'],
+            'entry':     entry,
+            'stop':      stop,
+            'target':    target,
+            'size':      proposed_size,
+            'path_id':   context.selected_path['id'],
+            'fvg_index': fvg_index,
         }
 
-        return {'proposal': context.proposal}
+        # --- Mandatory evidence block ---
+        path_prices = [step[1] for step in path]
+        path_std    = float(np.std(path_prices)) if len(path_prices) > 1 else 0.0
+        evidence = {
+            'curvature_mean':     K,
+            'curvature_max':      K_abs,
+            'curvature_regime':   regime,
+            'selected_path_action': context.selected_path.get('action', 0.0),
+            'path_entropy':       path_std,
+            'num_paths':          getattr(context, '_num_trajectories', 0),
+            'hbar':               getattr(context, '_epsilon', 0.015),
+            'fvg_index':          fvg_index,
+            'stop_multiplier':    stop_mult,
+        }
+        context.path_integral_evidence = evidence
+
+        return {
+            'proposal': context.proposal,
+            'evidence': evidence,
+        }
     
+    def _validate_path_stepwise(self, path: list, direction: str) -> Tuple[bool, str]:
+        """
+        Π_total: validate every step of a trajectory in Riemannian coordinate space.
+        Refusal-first semantics — any single violation refuses the entire path.
+
+        Gates:
+          1. Non-degenerate: path must have measurable net movement.
+          3. Oscillation: no midpoint retraces more than 80% of path_delta back past start.
+          4. Velocity: no single step exceeds 40% of total movement (no teleporting).
+        Note: direction consistency (Gate 2) is intentionally omitted — regime-gated
+        direction (breakout vs mean-reversion) is handled upstream in proposal generation.
+        """
+        if not path or len(path) < 2:
+            return False, "path_too_short"
+
+        prices = [step[1] for step in path]
+        first, last = prices[0], prices[-1]
+        path_delta = last - first
+
+        # Gate 1: Non-degenerate — net movement must be measurable
+        if abs(path_delta) < 1e-8:
+            return False, "degenerate_path"
+
+        path_went_up = path_delta > 0
+
+        # Gate 3: Oscillation — midpoints must not retrace back past start by > 80% of path_delta.
+        # For upward paths: reject if any midpoint drops more than 80% of path_delta below start.
+        # For downward paths: reject if any midpoint rises more than 80% of |path_delta| above start.
+        if len(prices) > 2:
+            midprices = prices[1:-1]
+            retrace_limit = 0.80
+            if path_went_up:
+                min_mid = min(midprices)
+                threshold = first - retrace_limit * path_delta
+                if min_mid < threshold:
+                    retrace_frac = (first - min_mid) / path_delta
+                    return False, f"excessive_oscillation_{retrace_frac:.0%}_below_start"
+            else:
+                max_mid = max(midprices)
+                threshold = first + retrace_limit * abs(path_delta)
+                if max_mid > threshold:
+                    retrace_frac = (max_mid - first) / abs(path_delta)
+                    return False, f"excessive_oscillation_{retrace_frac:.0%}_above_start"
+
+        # Gate 4: Velocity bound — no single step > 40% of total movement (no teleporting).
+        # Only enforced for paths with enough steps that uniform motion stays well under limit.
+        if len(prices) >= 5:
+            max_step = abs(path_delta) * 0.40
+            for i in range(1, len(prices)):
+                step_size = abs(prices[i] - prices[i - 1])
+                if step_size > max_step:
+                    return False, f"velocity_spike_at_step_{i}: {step_size:.6f}"
+
+        return True, "ok"
+
     def _stage_admissibility_check(self, context: PipelineContext) -> Dict:
         """Stage 12: Final admissibility check — hard risk gates enforced here."""
         proposal = context.proposal
         if not proposal:
             return {'admissible': False, 'risk_ok': False, 'reason': 'no_proposal'}
+
+        # Π_total: path-wise step validation before any risk computation
+        if context.selected_path:
+            path_ok, path_reason = self._validate_path_stepwise(
+                context.selected_path['path'],
+                proposal.get('direction', 'buy'),
+            )
+            if not path_ok:
+                context.risk_check_passed = False
+                return {
+                    'admissible': False,
+                    'risk_ok': False,
+                    'reason': f'pi_total_path_violation: {path_reason}',
+                }
 
         symbol = context.symbol
         direction = proposal.get('direction', 'buy')
@@ -956,8 +1077,15 @@ class PipelineOrchestrator:
         if context.collapse_decision != 'AUTHORIZED':
             return {'updated': False, 'reason': 'not_authorized'}
         
-        # Get PnL (mock for now)
-        pnl = 50.0 if context.reconciliation_status == 'match' else -20.0
+        # Stage 18 learns entry quality (L/T/E/R operator weights), not realized PnL.
+        # Realized PnL flows asynchronously via MT5PositionCloseTracker -> PPO only.
+        _RECONCILIATION_REWARD = {
+            'match':         10.0,
+            'mismatch':      -5.0,
+            'rollback':     -20.0,
+            'no_execution':   0.0,
+        }
+        pnl = _RECONCILIATION_REWARD.get(context.reconciliation_status, 0.0)
         
         # Get contributions from selected path
         if context.selected_path:

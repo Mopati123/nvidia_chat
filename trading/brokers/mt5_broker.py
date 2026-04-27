@@ -6,11 +6,13 @@ Supports demo and live accounts
 """
 
 import os
+import time
+import threading
 import MetaTrader5 as mt5
 import logging
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +324,25 @@ class MT5Broker:
                 mt5.TRADE_RETCODE_PRICE_CHANGED,
                 mt5.TRADE_RETCODE_TIMEOUT,
             }
+            # Pre-flight diagnostic — log terminal/account trade_allowed state
+            _tinfo = mt5.terminal_info()
+            _ainfo = mt5.account_info()
+            if _tinfo and not _tinfo.trade_allowed:
+                logger.error(
+                    "MT5 terminal reports trade_allowed=False — "
+                    "click the AutoTrading toolbar button (▶) in MetaTrader to enable it. "
+                    "terminal=%s build=%s path=%s",
+                    getattr(_tinfo, 'name', '?'), getattr(_tinfo, 'build', '?'),
+                    getattr(_tinfo, 'path', '?')
+                )
+            if _ainfo and not getattr(_ainfo, 'trade_allowed', True):
+                logger.error(
+                    "MT5 account reports trade_allowed=False — "
+                    "account=%s login=%s server=%s",
+                    getattr(_ainfo, 'name', '?'), getattr(_ainfo, 'login', '?'),
+                    getattr(_ainfo, 'server', '?')
+                )
+
             result = mt5.order_send(request)
             if result.retcode in _TRANSIENT:
                 import time as _time
@@ -501,5 +522,143 @@ class MT5Broker:
             return None
 
 
-# Singleton
+class MT5PositionCloseTracker:
+    """
+    Single daemon thread that polls MT5 for closed positions and fires callbacks
+    with actual realized PnL from mt5.history_deals_get().
+
+    Axiom: one shared thread polls all tracked positions, not one thread per trade.
+    Paper-mode safe: if start() is never called, track() calls are no-ops (daemon
+    thread never runs, callbacks accumulate until ABANDON_TIMEOUT if start() is
+    later called, or are never fired — acceptable for paper mode).
+    """
+
+    ABANDON_TIMEOUT: float = 3600.0  # seconds before falling back to predicted_pnl
+
+    def __init__(self, poll_interval: float = 3.0) -> None:
+        self.poll_interval = poll_interval
+        # ticket (int) -> (trade_id, callback, predicted_pnl, registered_at)
+        self._pending: Dict[int, Tuple[str, Callable, float, float]] = {}
+        self._lock = threading.Lock()
+        self._thread: Optional[threading.Thread] = None
+        self._stop_flag = threading.Event()
+
+    def track(self, ticket: int, trade_id: str,
+              callback: Callable[[str, float], None],
+              predicted_pnl: float = 0.0) -> None:
+        """Register a position. callback(trade_id, realized_pnl) fires when it closes."""
+        with self._lock:
+            self._pending[ticket] = (trade_id, callback, predicted_pnl, time.time())
+        logger.debug("MT5Tracker: tracking ticket=%d trade_id=%s", ticket, trade_id)
+
+    def start(self) -> None:
+        """Start background polling thread. Idempotent."""
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_flag.clear()
+        self._thread = threading.Thread(
+            target=self._poll_loop, name="mt5-pos-tracker", daemon=True
+        )
+        self._thread.start()
+        logger.info("MT5PositionCloseTracker started (poll_interval=%.1fs)", self.poll_interval)
+
+    def stop(self) -> None:
+        self._stop_flag.set()
+
+    def _poll_loop(self) -> None:
+        while not self._stop_flag.is_set():
+            try:
+                self._check_closed_positions()
+            except Exception as exc:
+                logger.warning("MT5Tracker poll error: %s", exc)
+            self._stop_flag.wait(timeout=self.poll_interval)
+
+    def _check_closed_positions(self) -> None:
+        with self._lock:
+            if not self._pending:
+                return
+            snapshot = dict(self._pending)
+
+        try:
+            open_positions = mt5.positions_get()
+        except Exception as exc:
+            logger.warning("MT5Tracker: positions_get failed: %s", exc)
+            return
+
+        open_tickets = {pos.ticket for pos in (open_positions or [])}
+        now = time.time()
+
+        for ticket, (trade_id, callback, predicted_pnl, registered_at) in snapshot.items():
+            if ticket in open_tickets:
+                if now - registered_at >= self.ABANDON_TIMEOUT:
+                    logger.warning(
+                        "MT5Tracker: ticket=%d abandoned after %.0fs — fallback $%.2f",
+                        ticket, now - registered_at, predicted_pnl,
+                    )
+                    self._fire(ticket, trade_id, callback, predicted_pnl)
+                continue
+
+            # Not in open set → position closed
+            realized = self._fetch_realized_pnl(ticket, predicted_pnl)
+            reason   = self._fetch_close_reason(ticket)
+            logger.info(
+                "MT5Tracker: ticket=%d closed | reason=%s | realized=$%.2f",
+                ticket, reason, realized,
+            )
+            self._fire(ticket, trade_id, callback, realized)
+
+    def _fetch_realized_pnl(self, ticket: int, fallback: float) -> float:
+        """Query history_deals_get for DEAL_ENTRY_OUT profit+swap. Falls back to predicted."""
+        try:
+            date_from = datetime.now(timezone.utc) - timedelta(days=1)
+            date_to   = datetime.now(timezone.utc) + timedelta(seconds=10)
+            deals = mt5.history_deals_get(date_from, date_to, group="*")
+        except Exception as exc:
+            logger.warning("MT5Tracker: history_deals_get failed ticket=%d: %s", ticket, exc)
+            return fallback
+
+        if not deals:
+            logger.warning(
+                "MT5Tracker: empty deal history for ticket=%d — fallback $%.2f", ticket, fallback
+            )
+            return fallback
+
+        DEAL_ENTRY_OUT = 1
+        closing = [d for d in deals if d.position_id == ticket and d.entry == DEAL_ENTRY_OUT]
+        if not closing:
+            logger.warning(
+                "MT5Tracker: no DEAL_ENTRY_OUT for ticket=%d — fallback $%.2f", ticket, fallback
+            )
+            return fallback
+
+        return float(sum(d.profit + getattr(d, 'swap', 0.0) for d in closing))
+
+    def _fetch_close_reason(self, ticket: int) -> str:
+        """Best-effort close reason for logging. Swallows all errors."""
+        REASON_MAP = {0: "CLIENT", 1: "SL", 2: "TP", 3: "CLIENT", 4: "STOP_OUT"}
+        try:
+            date_from = datetime.now(timezone.utc) - timedelta(days=1)
+            date_to   = datetime.now(timezone.utc) + timedelta(seconds=10)
+            deals = mt5.history_deals_get(date_from, date_to, group="*")
+            if deals:
+                cd = [d for d in deals if d.position_id == ticket and d.entry == 1]
+                if cd:
+                    return REASON_MAP.get(cd[-1].reason, str(cd[-1].reason))
+        except Exception:
+            pass
+        return "UNKNOWN"
+
+    def _fire(self, ticket: int, trade_id: str,
+              callback: Callable[[str, float], None], pnl: float) -> None:
+        """Remove from pending and fire callback. Swallows callback exceptions."""
+        with self._lock:
+            self._pending.pop(ticket, None)
+        try:
+            callback(trade_id, pnl)
+        except Exception as exc:
+            logger.error("MT5Tracker: callback failed trade_id=%s: %s", trade_id, exc)
+
+
+# Singletons
+mt5_position_tracker = MT5PositionCloseTracker()
 mt5_broker = MT5Broker()
