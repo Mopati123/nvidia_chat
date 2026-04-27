@@ -137,7 +137,7 @@ RUN pip install -r requirements.txt
 COPY . .
 RUN python trading/accelerated/setup.py build_ext --inplace
 
-CMD ["python", "telegram_bot_full.py"]
+CMD ["python", "-m", "apps.telegram.telegram_bot_full"]
 ```
 
 ---

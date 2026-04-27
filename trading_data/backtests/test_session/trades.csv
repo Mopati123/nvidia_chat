@@ -1,7 +1,0 @@
-trade_id,timestamp,symbol,direction,entry_price,exit_price,size,realized_pnl,return_pct,broker,duration_seconds,entry_signal,exit_reason,taep_authorized,taep_decision,risk_check_passed,max_drawdown,entry_rsi,entry_ofi,entry_volatility,tags,notes
-bt_001,2026-04-20T14:56:37.827267+00:00,EURUSD,buy,1.085,1.086,0.1,10.0,0.1,deriv,300.0,RSI,TP,True,ACCEPT,True,-5.0,30.0,100.0,0.01,test,Test trade
-bt_001,2026-04-20T14:57:49.260733+00:00,EURUSD,buy,1.085,1.086,0.1,10.0,0.1,deriv,300.0,RSI,TP,True,ACCEPT,True,-5.0,30.0,100.0,0.01,test,Test trade
-bt_001,2026-04-20T14:58:25.441307+00:00,EURUSD,buy,1.085,1.086,0.1,10.0,0.1,deriv,300.0,RSI,TP,True,ACCEPT,True,-5.0,30.0,100.0,0.01,test,Test trade
-bt_001,2026-04-21T08:13:49.022534+00:00,EURUSD,buy,1.085,1.086,0.1,10.0,0.1,deriv,300.0,RSI,TP,True,ACCEPT,True,-5.0,30.0,100.0,0.01,test,Test trade
-bt_001,2026-04-21T10:44:11.097955+00:00,EURUSD,buy,1.085,1.086,0.1,10.0,0.1,deriv,300.0,RSI,TP,True,ACCEPT,True,-5.0,30.0,100.0,0.01,test,Test trade
-bt_001,2026-04-21T11:17:45.911300+00:00,EURUSD,buy,1.085,1.086,0.1,10.0,0.1,deriv,300.0,RSI,TP,True,ACCEPT,True,-5.0,30.0,100.0,0.01,test,Test trade

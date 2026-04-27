@@ -50,7 +50,7 @@ export DAILY_LOSS_LIMIT=500
 ### Step 2: Launch
 
 ```bash
-python start_paper_trading.py
+python -m scripts.trading.start_paper_trading
 ```
 
 ### What to expect
@@ -228,7 +228,7 @@ export NVIDIA_API_KEY=your_nvidia_key
 ### Step 4: Launch
 
 ```bash
-python telegram_bot_full.py
+python -m apps.telegram.telegram_bot_full
 ```
 
 ### What the bot can do
@@ -245,10 +245,10 @@ python telegram_bot_full.py
 
 ```bash
 # T2 enhancements (geodesic seeds, FAISS, PPO, async, dashboard, Mojo)
-python -m pytest test_t2_integration.py -v
+python -m pytest validation/legacy/test_t2_integration.py -v
 
 # T3-A production hardening (circuit breaker, PnL divergence)
-python -m pytest test_t3a_integration.py -v
+python -m pytest validation/legacy/test_t3a_integration.py -v
 
 # Geometry unit tests
 python -m pytest tests/unit/test_geometry/ -v
@@ -259,15 +259,15 @@ python -m pytest tests/taep/ -v
 # Full test suite
 python -m pytest tests/ -v
 
-# All tests including integration
-python -m pytest . -v --ignore=test_full_system.py --ignore=test_integration.py
+# Maintained tests plus selected legacy integration tests
+python -m pytest tests/ validation/legacy/test_t2_integration.py validation/legacy/test_t3a_integration.py -v
 ```
 
 Expected output for T3-A:
 
 ```
-test_t3a_integration.py::TestT3A1CircuitBreaker::test_circuit_breaker_exists_on_orchestrator PASSED
-test_t3a_integration.py::TestT3A1CircuitBreaker::test_ten_failures_open_circuit PASSED
+validation/legacy/test_t3a_integration.py::TestT3A1CircuitBreaker::test_circuit_breaker_exists_on_orchestrator PASSED
+validation/legacy/test_t3a_integration.py::TestT3A1CircuitBreaker::test_ten_failures_open_circuit PASSED
 ...
 20 passed in 0.94s
 ```

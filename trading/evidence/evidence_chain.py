@@ -170,7 +170,7 @@ class Ed25519Signer:
             f.write(generated_pem)
         # #region agent log
         try:
-            with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+            with open("logs/debug-3c812d.log", "a", encoding="utf-8") as _dbg:
                 _dbg.write(json.dumps({
                     "sessionId": "3c812d",
                     "runId": "post-fix",
@@ -191,7 +191,7 @@ class Ed25519Signer:
         # Priority 5: generate ephemeral (dev only)
         # #region agent log
         try:
-            with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+            with open("logs/debug-3c812d.log", "a", encoding="utf-8") as _dbg:
                 _dbg.write(json.dumps({
                     "sessionId": "3c812d",
                     "runId": "pre-fix",
