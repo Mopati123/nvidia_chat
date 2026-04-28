@@ -27,6 +27,8 @@ Instead of simple indicators (RSI, MACD), this system:
 | [API Reference](docs/API.md) | Complete class and method reference for all modules |
 | [Tutorials](docs/TUTORIAL.md) | Step-by-step guides: paper trading, dashboard, Telegram bot, brokers |
 | [Examples](docs/examples/README.md) | Working Python code snippets |
+| [Deployment](docs/deployment/DEPLOY.md) | Deployment notes and platform process commands |
+| [Roadmap](docs/roadmaps/T3_ROADMAP.md) | Strategic roadmap beyond T3-A |
 
 ---
 
@@ -62,12 +64,36 @@ RAW MARKET DATA (MT5 / Deriv / TradingView)
 CRYPTOGRAPHIC AUDIT CHAIN
 ```
 
+### Rootfile-First Overlay
+
+The repository now includes a non-breaking rootfile overlay that makes the architecture explicit without moving the current working engine. Existing imports under `trading.*`, `taep.*`, and `apps.*` remain valid, while new canonical imports expose the same runtime through governance-oriented layers:
+
+| Canonical layer | Responsibility | Current implementation mapped underneath |
+|-----------------|----------------|-------------------------------------------|
+| `data_core` | Ingest, normalize, and prepare market state | `trading.brokers.market_data`, broker feeds, storage/ML adapters |
+| `core.simulation` | Generate proposals only: geometry, path integrals, strategy logic | `trading.geometry`, `trading.path_integral`, `trading.operators`, `trading.rl` |
+| `core.orchestration` | Select admissible paths and mint execution authority | `trading.kernel.scheduler`, `trading.kernel.apex_engine`, constraints |
+| `core.authority` | Canonical `ExecutionToken` facade and token validation | TAEP scheduler tokens plus trading scheduler token compatibility |
+| `core.execution` | Shadow/live/broker execution boundaries | `trading.shadow`, `apps.telegram.trading_live`, broker adapters |
+| `tachyonic_chain` | Evidence and Merkle audit-chain exports | `trading.evidence.evidence_chain` |
+| `backend_api` | Telegram, dashboard, and read/control surfaces | `apps.telegram`, `trading.dashboard` |
+
+The law of motion is: data prepares state, simulation proposes, orchestration authorizes, execution acts, and evidence records. Shadow and live execution boundaries now validate scheduler-issued authority through `core.authority.validate_token(...)`; proposal modules remain token-free so analysis stays cheap and safe.
+
+The overlay also adds `registry/` and `config/` artifacts that describe module placement, metadata requirements, system invariants, and the design tensor. Validators in `tools/` check metadata, import direction, scheduler-only token minting, and token validation at execution boundaries. The `core/self_healing` package is intentionally inert for now: it provides the skeleton for future perception, violation detection, repair planning, repair execution, and revalidation once the validators are trusted.
+
 ---
 
 ## Repository Structure
 
 ```
 nvidia_chat/
+├── core/                              ← Rootfile overlay: authority, orchestration, execution, simulation
+├── data_core/                         ← Canonical data ingestion/storage/ML namespace
+├── backend_api/                       ← Canonical bot/dashboard API namespace
+├── tachyonic_chain/                   ← Canonical evidence/audit-chain namespace
+├── registry/                          ← Design tensor, invariants, module map
+├── tools/                             ← Rootfile validators and structural checks
 ├── trading/
 │   ├── pipeline/orchestrator.py      ← 20-stage pipeline master
 │   ├── kernel/
@@ -119,12 +145,13 @@ nvidia_chat/
 │   ├── core/master_equation.py        ← Lindbladian dρ/dt
 │   ├── scheduler/scheduler.py         ← ExecutionToken authority
 │   └── constraints/                   ← Admissibility projectors Π
-├── tests/                             ← Organised unit + integration tests
-├── test_t2_integration.py             ← T2 enhancements (all passing)
-├── test_t3a_integration.py            ← T3-A production hardening (all passing)
-├── T3_ROADMAP.md                      ← Strategic roadmap (T3-A through T3-F)
-├── start_paper_trading.py             ← Launch paper trading loop
-├── telegram_bot_full.py               ← Telegram control interface
+├── apps/telegram/                     ← Telegram bot + deployment wrapper
+├── scripts/                           ← Broker, trading, and validation commands
+├── tests/                             ← Maintained pytest suites
+├── validation/                        ← Legacy and manual validation scripts
+├── docs/deployment/                   ← Deployment guides
+├── docs/reports/                      ← Historical implementation reports
+├── docs/roadmaps/                     ← Strategic roadmaps
 └── requirements.txt
 ```
 
@@ -141,7 +168,7 @@ pip install -r requirements.txt
 ### Run Paper Trading
 
 ```bash
-python start_paper_trading.py
+python -m scripts.trading.start_paper_trading
 ```
 
 ### Run the Dashboard
@@ -156,10 +183,10 @@ Open `http://localhost:8080` — live PnL, regime, circuit breaker state, kill s
 
 ```bash
 # T2 enhancements (geodesic, FAISS, PPO, async, dashboard, Mojo)
-python -m pytest test_t2_integration.py -v
+python -m pytest validation/legacy/test_t2_integration.py -v
 
 # T3-A production hardening (circuit breaker, PnL divergence)
-python -m pytest test_t3a_integration.py -v
+python -m pytest validation/legacy/test_t3a_integration.py -v
 
 # Full test suite
 python -m pytest tests/ -v
@@ -235,7 +262,7 @@ export DAILY_LOSS_LIMIT="500"
 
 ## Enhancement Roadmap
 
-See [T3_ROADMAP.md](T3_ROADMAP.md) for the full strategic plan.
+See [T3_ROADMAP.md](docs/roadmaps/T3_ROADMAP.md) for the full strategic plan.
 
 | Phase | What | Status |
 |-------|------|--------|

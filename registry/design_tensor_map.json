@@ -1,0 +1,19 @@
+{
+  "law_of_motion": [
+    "data_core prepares state",
+    "core.simulation proposes trajectories",
+    "core.orchestration authorizes collapse",
+    "core.execution performs authorized actions",
+    "tachyonic_chain records evidence"
+  ],
+  "layers": {
+    "data_core": "Market ingestion, storage, and ML state preparation.",
+    "core.simulation": "Geometry, path integrals, agents, and proposal generation.",
+    "core.orchestration": "Scheduler, constraints, and canonical engine state transitions.",
+    "core.authority": "Execution token facade and validation.",
+    "core.execution": "Shadow, demo, live, and broker execution boundaries.",
+    "backend_api": "Measurement/read APIs for bots and dashboards.",
+    "tachyonic_chain": "Evidence, signatures, and audit chain adapters."
+  }
+}
+

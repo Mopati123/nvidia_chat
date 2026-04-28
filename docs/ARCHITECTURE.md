@@ -4,6 +4,43 @@
 
 ApexQuantumICT treats financial markets as a curved Riemannian manifold and selects trades using the same variational principle that governs quantum field theory: the path of least action. Every decision passes through a 20-stage canonical pipeline and requires a cryptographic authorization token before execution.
 
+The rootfile-first overlay makes that contract explicit without breaking the existing engine. Current modules stay in place, while canonical namespaces describe the architecture in first-order layers: state preparation, proposal generation, authorization, execution, evidence, validation, and API observation.
+
+---
+
+## Rootfile-First Overlay
+
+The overlay is a map, not a hard migration. It preserves `trading.*`, `taep.*`, and `apps.*` imports while adding canonical packages that make the engine auditable by humans and validators.
+
+```
+data_core -> core.simulation -> core.orchestration -> core.execution -> tachyonic_chain
+     |              |                    |                    |                 |
+  prepare        propose             authorize               act             prove
+```
+
+### Canonical Layers
+
+| Layer | Canonical namespace | Rule |
+|-------|---------------------|------|
+| State preparation | `data_core` | Normalize external data into internal market state; never execute trades |
+| Proposal generation | `core.simulation` | Produce trajectories, geometry, operator scores, and strategy proposals; never mint tokens |
+| Orchestration | `core.orchestration` | Apply constraints, choose paths, and remain the scheduler-owned source of execution authority |
+| Authority | `core.authority` | Present one token facade over TAEP and trading scheduler tokens; expose `validate_token(...)` |
+| Execution | `core.execution` | Gate shadow/live/broker actions with token validation and emit refusal evidence on denial |
+| Evidence | `tachyonic_chain` | Export audit-chain and evidence primitives for accept/refuse paths |
+| Interfaces | `backend_api` | Read state, issue user commands, and surface observations without bypassing authority |
+| Validation | `tools` | Check metadata, import direction, token minting, token gating, and evidence boundaries |
+
+### Token-Flow Authority
+
+The authority invariant is intentionally simple: no shadow, live, or broker execution boundary should act without scheduler-issued permission. `core.authority.execution_token.ExecutionToken` is the canonical facade over existing TAEP and trading token implementations; `core.authority.token_validator.validate_token(...)` is the single execution-boundary validation entrypoint.
+
+Schedulers remain the only components allowed to mint execution authority. Simulation and strategy modules are proposal generators only. If an execution boundary receives no token or an invalid token, it must refuse structurally and emit evidence rather than silently falling through.
+
+### Overlay Migration Rule
+
+The first pass favors adapters and registry metadata over file moves. This keeps the runtime stable while allowing validators to reason about the intended architecture. Hard migration is deferred until rootfile tests, deterministic shadow smoke tests, and broader package tests are green.
+
 ---
 
 ## State Space

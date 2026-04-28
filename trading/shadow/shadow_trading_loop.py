@@ -5,12 +5,14 @@ Pre-collapse observation domain.
 Papas observer: zero execution authority.
 """
 
+import hashlib
 import time
 import numpy as np
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from core.authority.token_validator import validate_token
 from ..kernel.apex_engine import ApexEngine, ExecutionMode, ExecutionOutcome
 from ..path_integral.trajectory_generator import PathIntegralEngine
 from ..operators.operator_registry import OperatorRegistry
@@ -72,7 +74,9 @@ class ShadowTradingLoop:
                       symbol: str,
                       ohlcv_data: List[Dict],
                       bias: str = "neutral",
-                      session: str = "neutral") -> ShadowExecution:
+                      session: str = "neutral",
+                      token: Optional[Any] = None,
+                      require_token: bool = False) -> ShadowExecution:
         """
         Execute full canonical cycle in shadow mode.
         
@@ -86,6 +90,19 @@ class ShadowTradingLoop:
             ShadowExecution: Full execution record with evidence
         """
         start_time = time.time()
+
+        if token is not None or require_token:
+            validation = validate_token(token, operation="shadow_execution")
+            if not validation.valid:
+                execution = self._refused_execution(
+                    symbol=symbol,
+                    bias=bias,
+                    start_time=start_time,
+                    reason=validation.reason,
+                )
+                self._update_metrics(execution)
+                self.execution_history.append(execution)
+                return execution
         
         # A: Adapt market data via Minkowski bridge
         market_state = self.market_adapter.adapt(ohlcv_data)
@@ -144,6 +161,30 @@ class ShadowTradingLoop:
         self.execution_history.append(execution)
         
         return execution
+
+    def _refused_execution(
+        self,
+        symbol: str,
+        bias: str,
+        start_time: float,
+        reason: str,
+    ) -> ShadowExecution:
+        """Create an evidenced refusal when execution authority is missing."""
+        evidence_hash = hashlib.sha256(
+            f"SHADOW_REFUSED:{symbol}:{bias}:{reason}:{start_time}".encode()
+        ).hexdigest()
+        return ShadowExecution(
+            execution_id=f"shadow_refused_{symbol}_{int(time.time())}",
+            timestamp=time.time(),
+            symbol=symbol,
+            bias=bias,
+            outcome=ExecutionOutcome.REFUSED,
+            trajectory=None,
+            evidence_hash=evidence_hash,
+            operator_scores={},
+            pnl_prediction=0.0,
+            execution_time_ms=(time.time() - start_time) * 1000,
+        )
     
     def _update_metrics(self, execution: ShadowExecution):
         """Update performance metrics"""
