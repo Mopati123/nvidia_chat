@@ -23,6 +23,8 @@ class TokenFlowValidator:
         "execute_shadow",
         "place_order",
         "place_contract",
+        "close_position",
+        "sell_contract",
     }
 
     def validate_file(self, path: str | Path) -> ValidationReport:
@@ -45,4 +47,3 @@ class TokenFlowValidator:
                     )
                 )
         return ValidationReport(not issues, issues)
-

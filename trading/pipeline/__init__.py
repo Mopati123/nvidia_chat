@@ -9,6 +9,14 @@ Raw Data → State Construction → Path Generation → Constraint Filtering
 
 from .orchestrator import PipelineOrchestrator, PipelineStage
 
+try:
+    from ._rootfile_enforcement import install_pipeline_token_bridge
+
+    install_pipeline_token_bridge()
+except Exception:
+    # Pipeline imports should not fail because optional enforcement shims failed.
+    pass
+
 __all__ = [
     'PipelineOrchestrator',
     'PipelineStage',

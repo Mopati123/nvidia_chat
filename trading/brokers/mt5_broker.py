@@ -6,11 +6,16 @@ Supports demo and live accounts
 """
 
 import os
+import time
+import threading
 import MetaTrader5 as mt5
 import logging
-from typing import Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+from core.authority.token_validator import validate_token
+from tachyonic_chain.audit_log import append_execution_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,16 @@ class MT5Position:
     profit: float
     swap: float
     open_time: datetime
+
+
+def _filling_mode(symbol_info) -> int:
+    """Return the first filling mode supported by the symbol (FOK > IOC > RETURN)."""
+    fm = getattr(symbol_info, "filling_mode", 0)
+    if fm & 1:
+        return mt5.ORDER_FILLING_FOK
+    if fm & 2:
+        return mt5.ORDER_FILLING_IOC
+    return mt5.ORDER_FILLING_RETURN
 
 
 class MT5Broker:
@@ -227,21 +242,75 @@ class MT5Broker:
             logger.error(f"MT5 OHLCV fetch failed: {e}")
             return []
     
-    def place_order(self, order: MT5Order) -> Optional[Dict]:
+    def place_order(self, order: MT5Order, *, token: Optional[Any] = None) -> Optional[Dict]:
         """
         Place market order via MT5
         
         Returns order result or None if failed
         """
-        if not self.connected:
+        validation = validate_token(token, operation="live_execution")
+        if not validation.valid:
+            logger.warning("MT5 order blocked by token validator: %s", validation.reason)
+            append_execution_evidence(
+                event_type="broker_refusal",
+                execution_id=f"mt5_refused_{order.symbol}_{int(time.time())}",
+                operation="live_execution",
+                symbol=order.symbol,
+                outcome="refused",
+                token_status=validation.reason,
+                payload={
+                    "broker": "mt5",
+                    "order_type": order.order_type,
+                    "volume": order.volume,
+                },
+            )
+            return None
+
+        # Accept if this instance connected, or any live MT5 session is active in this process
+        if not self.connected and mt5.account_info() is None:
             logger.error("MT5 not connected")
             return None
-        
+
         try:
+            # Resolve broker-specific symbol suffix (e.g. EURUSD_r, EURUSDm, EURUSD.)
+            resolved = order.symbol
+            if mt5.symbol_info(resolved) is None:
+                for suffix in ('_r', 'm', '.', '_micro', '_pro', '_ecn'):
+                    candidate = order.symbol + suffix
+                    if mt5.symbol_info(candidate) is not None:
+                        logger.info("MT5 symbol resolved: %s → %s", order.symbol, candidate)
+                        resolved = candidate
+                        break
+            order = MT5Order(
+                symbol=resolved,
+                order_type=order.order_type,
+                volume=order.volume,
+                price=order.price,
+                sl=order.sl,
+                tp=order.tp,
+                deviation=order.deviation,
+                magic=order.magic,
+                comment=order.comment,
+            )
+
             # Get symbol info
             symbol_info = mt5.symbol_info(order.symbol)
             if symbol_info is None:
                 logger.error(f"Symbol {order.symbol} not found")
+                append_execution_evidence(
+                    event_type="broker_execution",
+                    execution_id=f"mt5_failed_{order.symbol}_{int(time.time())}",
+                    operation="live_execution",
+                    symbol=order.symbol,
+                    outcome="failed",
+                    token_status="authorized",
+                    payload={
+                        "broker": "mt5",
+                        "reason": "symbol_not_found",
+                        "order_type": order.order_type,
+                        "volume": order.volume,
+                    },
+                )
                 return None
             
             if not symbol_info.visible:
@@ -275,9 +344,9 @@ class MT5Broker:
                 "magic": order.magic,
                 "comment": order.comment,
                 "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
+                "type_filling": _filling_mode(symbol_info),
             }
-            
+
             # Add SL/TP if provided
             if order.sl:
                 request["sl"] = order.sl
@@ -290,6 +359,25 @@ class MT5Broker:
                 mt5.TRADE_RETCODE_PRICE_CHANGED,
                 mt5.TRADE_RETCODE_TIMEOUT,
             }
+            # Pre-flight diagnostic — log terminal/account trade_allowed state
+            _tinfo = mt5.terminal_info()
+            _ainfo = mt5.account_info()
+            if _tinfo and not _tinfo.trade_allowed:
+                logger.error(
+                    "MT5 terminal reports trade_allowed=False — "
+                    "click the AutoTrading toolbar button (▶) in MetaTrader to enable it. "
+                    "terminal=%s build=%s path=%s",
+                    getattr(_tinfo, 'name', '?'), getattr(_tinfo, 'build', '?'),
+                    getattr(_tinfo, 'path', '?')
+                )
+            if _ainfo and not getattr(_ainfo, 'trade_allowed', True):
+                logger.error(
+                    "MT5 account reports trade_allowed=False — "
+                    "account=%s login=%s server=%s",
+                    getattr(_ainfo, 'name', '?'), getattr(_ainfo, 'login', '?'),
+                    getattr(_ainfo, 'server', '?')
+                )
+
             result = mt5.order_send(request)
             if result.retcode in _TRANSIENT:
                 import time as _time
@@ -301,16 +389,37 @@ class MT5Broker:
                 result = mt5.order_send(request)
 
             if result.retcode != mt5.TRADE_RETCODE_DONE:
-                logger.error(
-                    "MT5 order failed: retcode=%d symbol=%s volume=%.2f",
-                    result.retcode, order.symbol, order.volume
+                if result.retcode == 10027:
+                    logger.error(
+                        "MT5 AutoTrading DISABLED (retcode=10027) — "
+                        "enable it in MetaTrader: Tools → Options → Expert Advisors "
+                        "→ 'Allow automated trading', or click the AutoTrading toolbar button"
+                    )
+                else:
+                    logger.error(
+                        "MT5 order failed: retcode=%d symbol=%s volume=%.2f",
+                        result.retcode, order.symbol, order.volume
+                    )
+                append_execution_evidence(
+                    event_type="broker_execution",
+                    execution_id=f"mt5_failed_{order.symbol}_{int(time.time())}",
+                    operation="live_execution",
+                    symbol=order.symbol,
+                    outcome="failed",
+                    token_status="authorized",
+                    payload={
+                        "broker": "mt5",
+                        "retcode": result.retcode,
+                        "order_type": order.order_type,
+                        "volume": order.volume,
+                    },
                 )
                 return None
             
             logger.info(f"Order executed: {order.symbol} {order.order_type} "
                        f"{order.volume} lots @ {result.price}")
             
-            return {
+            execution_result = {
                 'ticket': result.order,
                 'symbol': order.symbol,
                 'volume': order.volume,
@@ -320,6 +429,16 @@ class MT5Broker:
                 'comment': order.comment,
                 'retcode': result.retcode
             }
+            append_execution_evidence(
+                event_type="broker_execution",
+                execution_id=f"mt5_{execution_result['ticket']}",
+                operation="live_execution",
+                symbol=order.symbol,
+                outcome="success",
+                token_status="authorized",
+                payload={"broker": "mt5", **execution_result},
+            )
+            return execution_result
             
         except Exception as e:
             logger.error(f"Order placement failed: {e}")
@@ -350,8 +469,21 @@ class MT5Broker:
         
         return result
     
-    def close_position(self, ticket: int) -> bool:
+    def close_position(self, ticket: int, *, token: Optional[Any] = None) -> bool:
         """Close position by ticket number"""
+        validation = validate_token(token, operation="live_execution")
+        if not validation.valid:
+            logger.warning("MT5 close blocked by token validator: %s", validation.reason)
+            append_execution_evidence(
+                event_type="broker_refusal",
+                execution_id=f"mt5_close_refused_{ticket}_{int(time.time())}",
+                operation="live_execution",
+                outcome="refused",
+                token_status=validation.reason,
+                payload={"broker": "mt5", "ticket": ticket},
+            )
+            return False
+
         if not self.connected:
             return False
         
@@ -376,11 +508,21 @@ class MT5Broker:
                 "magic": 0,
                 "comment": "ApexQuantumICT close",
                 "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
+                "type_filling": _filling_mode(mt5.symbol_info(pos.symbol)),
             }
-            
+
             result = mt5.order_send(request)
-            return result.retcode == mt5.TRADE_RETCODE_DONE
+            success = result.retcode == mt5.TRADE_RETCODE_DONE
+            append_execution_evidence(
+                event_type="broker_execution",
+                execution_id=f"mt5_close_{ticket}_{int(time.time())}",
+                operation="live_execution",
+                symbol=pos.symbol,
+                outcome="success" if success else "failed",
+                token_status="authorized",
+                payload={"broker": "mt5", "ticket": ticket, "retcode": result.retcode},
+            )
+            return success
             
         except Exception as e:
             logger.error(f"Close position failed: {e}")
@@ -414,6 +556,21 @@ class MT5Broker:
             logger.error(f"Failed to get symbols: {e}")
             return []
     
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """Return current bid price for symbol (used by AsyncTickLoop producer)."""
+        if not self.connected and mt5.account_info() is None:
+            return None
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                for suffix in ('_r', 'm', '.', '_micro', '_pro', '_ecn'):
+                    tick = mt5.symbol_info_tick(symbol + suffix)
+                    if tick is not None:
+                        break
+            return float(tick.bid) if tick else None
+        except Exception:
+            return None
+
     def get_symbol_info(self, symbol: str) -> Optional[Dict]:
         """Get detailed symbol information from MT5"""
         if not self.connected:
@@ -447,5 +604,143 @@ class MT5Broker:
             return None
 
 
-# Singleton
+class MT5PositionCloseTracker:
+    """
+    Single daemon thread that polls MT5 for closed positions and fires callbacks
+    with actual realized PnL from mt5.history_deals_get().
+
+    Axiom: one shared thread polls all tracked positions, not one thread per trade.
+    Paper-mode safe: if start() is never called, track() calls are no-ops (daemon
+    thread never runs, callbacks accumulate until ABANDON_TIMEOUT if start() is
+    later called, or are never fired — acceptable for paper mode).
+    """
+
+    ABANDON_TIMEOUT: float = 3600.0  # seconds before falling back to predicted_pnl
+
+    def __init__(self, poll_interval: float = 3.0) -> None:
+        self.poll_interval = poll_interval
+        # ticket (int) -> (trade_id, callback, predicted_pnl, registered_at)
+        self._pending: Dict[int, Tuple[str, Callable, float, float]] = {}
+        self._lock = threading.Lock()
+        self._thread: Optional[threading.Thread] = None
+        self._stop_flag = threading.Event()
+
+    def track(self, ticket: int, trade_id: str,
+              callback: Callable[[str, float], None],
+              predicted_pnl: float = 0.0) -> None:
+        """Register a position. callback(trade_id, realized_pnl) fires when it closes."""
+        with self._lock:
+            self._pending[ticket] = (trade_id, callback, predicted_pnl, time.time())
+        logger.debug("MT5Tracker: tracking ticket=%d trade_id=%s", ticket, trade_id)
+
+    def start(self) -> None:
+        """Start background polling thread. Idempotent."""
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_flag.clear()
+        self._thread = threading.Thread(
+            target=self._poll_loop, name="mt5-pos-tracker", daemon=True
+        )
+        self._thread.start()
+        logger.info("MT5PositionCloseTracker started (poll_interval=%.1fs)", self.poll_interval)
+
+    def stop(self) -> None:
+        self._stop_flag.set()
+
+    def _poll_loop(self) -> None:
+        while not self._stop_flag.is_set():
+            try:
+                self._check_closed_positions()
+            except Exception as exc:
+                logger.warning("MT5Tracker poll error: %s", exc)
+            self._stop_flag.wait(timeout=self.poll_interval)
+
+    def _check_closed_positions(self) -> None:
+        with self._lock:
+            if not self._pending:
+                return
+            snapshot = dict(self._pending)
+
+        try:
+            open_positions = mt5.positions_get()
+        except Exception as exc:
+            logger.warning("MT5Tracker: positions_get failed: %s", exc)
+            return
+
+        open_tickets = {pos.ticket for pos in (open_positions or [])}
+        now = time.time()
+
+        for ticket, (trade_id, callback, predicted_pnl, registered_at) in snapshot.items():
+            if ticket in open_tickets:
+                if now - registered_at >= self.ABANDON_TIMEOUT:
+                    logger.warning(
+                        "MT5Tracker: ticket=%d abandoned after %.0fs — fallback $%.2f",
+                        ticket, now - registered_at, predicted_pnl,
+                    )
+                    self._fire(ticket, trade_id, callback, predicted_pnl)
+                continue
+
+            # Not in open set → position closed
+            realized = self._fetch_realized_pnl(ticket, predicted_pnl)
+            reason   = self._fetch_close_reason(ticket)
+            logger.info(
+                "MT5Tracker: ticket=%d closed | reason=%s | realized=$%.2f",
+                ticket, reason, realized,
+            )
+            self._fire(ticket, trade_id, callback, realized)
+
+    def _fetch_realized_pnl(self, ticket: int, fallback: float) -> float:
+        """Query history_deals_get for DEAL_ENTRY_OUT profit+swap. Falls back to predicted."""
+        try:
+            date_from = datetime.now(timezone.utc) - timedelta(days=1)
+            date_to   = datetime.now(timezone.utc) + timedelta(seconds=10)
+            deals = mt5.history_deals_get(date_from, date_to, group="*")
+        except Exception as exc:
+            logger.warning("MT5Tracker: history_deals_get failed ticket=%d: %s", ticket, exc)
+            return fallback
+
+        if not deals:
+            logger.warning(
+                "MT5Tracker: empty deal history for ticket=%d — fallback $%.2f", ticket, fallback
+            )
+            return fallback
+
+        DEAL_ENTRY_OUT = 1
+        closing = [d for d in deals if d.position_id == ticket and d.entry == DEAL_ENTRY_OUT]
+        if not closing:
+            logger.warning(
+                "MT5Tracker: no DEAL_ENTRY_OUT for ticket=%d — fallback $%.2f", ticket, fallback
+            )
+            return fallback
+
+        return float(sum(d.profit + getattr(d, 'swap', 0.0) for d in closing))
+
+    def _fetch_close_reason(self, ticket: int) -> str:
+        """Best-effort close reason for logging. Swallows all errors."""
+        REASON_MAP = {0: "CLIENT", 1: "SL", 2: "TP", 3: "CLIENT", 4: "STOP_OUT"}
+        try:
+            date_from = datetime.now(timezone.utc) - timedelta(days=1)
+            date_to   = datetime.now(timezone.utc) + timedelta(seconds=10)
+            deals = mt5.history_deals_get(date_from, date_to, group="*")
+            if deals:
+                cd = [d for d in deals if d.position_id == ticket and d.entry == 1]
+                if cd:
+                    return REASON_MAP.get(cd[-1].reason, str(cd[-1].reason))
+        except Exception:
+            pass
+        return "UNKNOWN"
+
+    def _fire(self, ticket: int, trade_id: str,
+              callback: Callable[[str, float], None], pnl: float) -> None:
+        """Remove from pending and fire callback. Swallows callback exceptions."""
+        with self._lock:
+            self._pending.pop(ticket, None)
+        try:
+            callback(trade_id, pnl)
+        except Exception as exc:
+            logger.error("MT5Tracker: callback failed trade_id=%s: %s", trade_id, exc)
+
+
+# Singletons
+mt5_position_tracker = MT5PositionCloseTracker()
 mt5_broker = MT5Broker()

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from core.authority.token_validator import validate_token
+from tachyonic_chain.audit_log import append_execution_evidence
 from ..kernel.apex_engine import ApexEngine, ExecutionMode, ExecutionOutcome
 from ..path_integral.trajectory_generator import PathIntegralEngine
 from ..operators.operator_registry import OperatorRegistry
@@ -155,6 +156,22 @@ class ShadowTradingLoop:
             pnl_prediction=result.trajectory.get("predicted_pnl", 0) if result.trajectory else 0,
             execution_time_ms=result.execution_time_ms
         )
+
+        append_execution_evidence(
+            event_type="shadow_execution",
+            execution_id=execution.execution_id,
+            operation="shadow_execution",
+            symbol=symbol,
+            outcome=execution.outcome.value,
+            token_status="authorized" if token is not None else "compatibility_mode",
+            evidence_hash=execution.evidence_hash,
+            payload={
+                "bias": bias,
+                "session": session,
+                "pnl_prediction": execution.pnl_prediction,
+                "execution_time_ms": execution.execution_time_ms,
+            },
+        )
         
         # Update metrics
         self._update_metrics(execution)
@@ -173,7 +190,7 @@ class ShadowTradingLoop:
         evidence_hash = hashlib.sha256(
             f"SHADOW_REFUSED:{symbol}:{bias}:{reason}:{start_time}".encode()
         ).hexdigest()
-        return ShadowExecution(
+        execution = ShadowExecution(
             execution_id=f"shadow_refused_{symbol}_{int(time.time())}",
             timestamp=time.time(),
             symbol=symbol,
@@ -185,6 +202,17 @@ class ShadowTradingLoop:
             pnl_prediction=0.0,
             execution_time_ms=(time.time() - start_time) * 1000,
         )
+        append_execution_evidence(
+            event_type="shadow_refusal",
+            execution_id=execution.execution_id,
+            operation="shadow_execution",
+            symbol=symbol,
+            outcome=execution.outcome.value,
+            token_status=reason,
+            evidence_hash=evidence_hash,
+            payload={"bias": bias, "reason": reason},
+        )
+        return execution
     
     def _update_metrics(self, execution: ShadowExecution):
         """Update performance metrics"""
