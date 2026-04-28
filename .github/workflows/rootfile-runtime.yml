@@ -1,0 +1,41 @@
+name: Rootfile Runtime Validation
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  rootfile-runtime:
+    runs-on: windows-latest
+    env:
+      NVAPI_KEY: test
+      TELEGRAM_BOT_TOKEN: test
+      APEX_EVIDENCE_LOG: ${{ runner.temp }}\execution_evidence.jsonl
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Rootfile validators and token flow
+        run: python -m pytest tests\rootfile -q
+
+      - name: Deterministic core smoke
+        run: python test_integration.py
+
+      - name: Acceleration integration smoke
+        run: python test_integration_final.py
+
+      - name: Maintained test suite
+        run: python -m pytest tests -q

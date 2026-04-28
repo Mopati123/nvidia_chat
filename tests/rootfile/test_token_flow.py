@@ -1,12 +1,19 @@
 """Token-flow tests for rootfile execution boundaries."""
 
+import json
 import random
+from pathlib import Path
 
 import numpy as np
 
 from apps.telegram.trading_live import LiveTradingSystem
 from core.authority.execution_token import issue_execution_token
 from core.execution.shadow import execute_shadow_authorized
+from tachyonic_chain.audit_log import append_execution_evidence
+from tools.token_flow_validator import TokenFlowValidator
+from trading.brokers.deriv_broker import DerivBroker, DerivOrder
+import trading.brokers.mt5_broker as mt5_module
+from trading.brokers.mt5_broker import MT5Broker, MT5Order
 from trading.kernel.apex_engine import ExecutionOutcome
 
 
@@ -87,3 +94,69 @@ def test_live_trading_system_accepts_authorized_shadow_token():
     assert result["mode"] == "shadow"
     assert result["evidence_hash"]
 
+
+def test_direct_mt5_order_refuses_missing_token_before_terminal_check(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APEX_EVIDENCE_LOG", str(tmp_path / "evidence.jsonl"))
+
+    def fail_account_info():
+        raise AssertionError("MT5 terminal should not be touched without a token")
+
+    monkeypatch.setattr(mt5_module.mt5, "account_info", fail_account_info)
+    broker = MT5Broker()
+    order = MT5Order(symbol="EURUSD", order_type="buy", volume=0.01)
+
+    assert broker.place_order(order, token=None) is None
+
+    records = (tmp_path / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    assert records
+    assert json.loads(records[-1])["outcome"] == "refused"
+
+
+def test_direct_deriv_contract_refuses_missing_token_before_api_call(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APEX_EVIDENCE_LOG", str(tmp_path / "evidence.jsonl"))
+
+    class GuardedDeriv(DerivBroker):
+        def _send_request(self, request):
+            raise AssertionError("Deriv API should not be touched without a token")
+
+    broker = GuardedDeriv()
+    order = DerivOrder("frxEURUSD", "CALL", 1.0, 5, "m")
+
+    assert broker.place_contract(order, token=None) is None
+
+    records = (tmp_path / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    assert records
+    assert json.loads(records[-1])["outcome"] == "refused"
+
+
+def test_audit_log_hash_chains_execution_records(tmp_path: Path):
+    log_path = tmp_path / "evidence.jsonl"
+
+    first = append_execution_evidence(
+        event_type="test_refusal",
+        execution_id="exec_1",
+        operation="live_execution",
+        outcome="refused",
+        token_status="missing execution token",
+        log_path=log_path,
+    )
+    second = append_execution_evidence(
+        event_type="test_execution",
+        execution_id="exec_2",
+        operation="live_execution",
+        outcome="success",
+        token_status="authorized",
+        log_path=log_path,
+    )
+
+    records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert records[0]["record_hash"] == first
+    assert records[1]["previous_hash"] == first
+    assert records[1]["record_hash"] == second
+
+
+def test_token_flow_validator_accepts_direct_broker_boundaries():
+    validator = TokenFlowValidator()
+
+    assert validator.validate_file("trading/brokers/mt5_broker.py").valid
+    assert validator.validate_file("trading/brokers/deriv_broker.py").valid
