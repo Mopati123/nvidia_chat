@@ -1,7 +1,12 @@
 """Canonical evidence and audit-chain namespace."""
 
 from trading.evidence.evidence_chain import EvidenceBundle, EvidenceEmitter, MerkleTree
-from .audit_log import append_execution_evidence
+from .audit_log import (
+    ValidationReport,
+    append_execution_evidence,
+    iter_execution_evidence,
+    verify_execution_evidence_chain,
+)
 
 META = {
     "tier": "rootfile",
@@ -9,4 +14,12 @@ META = {
     "operator_type": "evidence_adapter",
 }
 
-__all__ = ["EvidenceBundle", "EvidenceEmitter", "MerkleTree", "append_execution_evidence"]
+__all__ = [
+    "EvidenceBundle",
+    "EvidenceEmitter",
+    "MerkleTree",
+    "ValidationReport",
+    "append_execution_evidence",
+    "iter_execution_evidence",
+    "verify_execution_evidence_chain",
+]
