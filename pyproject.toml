@@ -3,10 +3,10 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "taep"
-version = "1.0.0"
-description = "Tachyonic Algorithmic Encryption Protocol - Cryptographic governance for algorithmic trading"
-readme = "taep/README.md"
+name = "apexquantumict"
+version = "2.0.0"
+description = "ApexQuantumICT trading engine with TAEP governance, market geometry, broker integrations, and Telegram controls"
+readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -24,6 +24,8 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "torch>=2.11.0",
     "cryptography>=41.0.0",
     "keyring>=24.0.0",
     "python-dotenv>=1.0.0",
@@ -44,7 +46,19 @@ accel = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["taep*"]
+include = [
+    "taep*",
+    "trading*",
+    "apps*",
+    "scripts*",
+    "core*",
+    "data_core*",
+    "backend_api*",
+    "tachyonic_chain*",
+    "tools*",
+    "infra*",
+    "registry*",
+]
 
 [tool.setuptools.package-data]
 taep = ["py.typed"]

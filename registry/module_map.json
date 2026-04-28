@@ -1,0 +1,37 @@
+{
+  "core.orchestration": [
+    "trading.kernel.apex_engine",
+    "trading.kernel.scheduler",
+    "trading.kernel.H_constraints",
+    "trading.pipeline.orchestrator"
+  ],
+  "core.authority": [
+    "taep.core.state",
+    "taep.scheduler.execution_token",
+    "trading.kernel.scheduler"
+  ],
+  "core.execution": [
+    "trading.shadow.shadow_trading_loop",
+    "apps.telegram.trading_live",
+    "trading.brokers.mt5_broker",
+    "trading.brokers.deriv_broker"
+  ],
+  "core.simulation": [
+    "trading.path_integral.trajectory_generator",
+    "trading.geometry",
+    "trading.agents",
+    "trading.rl"
+  ],
+  "data_core": [
+    "trading.brokers.market_data",
+    "trading.microstructure"
+  ],
+  "backend_api": [
+    "apps.telegram",
+    "trading.dashboard"
+  ],
+  "tachyonic_chain": [
+    "trading.evidence.evidence_chain"
+  ]
+}
+

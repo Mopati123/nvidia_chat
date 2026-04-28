@@ -50,6 +50,10 @@ class ExecutionToken:
         expected = hashlib.sha256(data.encode()).hexdigest()[:32]
         return self.authorization_signature.startswith(expected)
 
+    def is_valid(self) -> bool:
+        """Compatibility alias used by the Apex execution gate."""
+        return self.verify()
+
 
 @dataclass
 class SchedulerState:
