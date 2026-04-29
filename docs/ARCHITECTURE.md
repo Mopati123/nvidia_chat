@@ -230,7 +230,11 @@ HFT execution has a separate authority scope from normal live execution. A `live
 
 The first execution gateway is fake-broker only. It validates token scope, feed freshness, slippage, orders/minute, open notional, per-symbol exposure, daily loss cap, idempotency keys, cooldown state, and kill switch status before recording an accepted sandbox order. Accepted, refused, failed, canceled, and reconciled paths all append durable audit-chain evidence.
 
-**Files:** `core/authority/hft_token.py`, `core/execution/hft.py`, `trading/kernel/scheduler.py`
+Real-routing canary support is code-gated and refusal-first. `CodeGatedHFTGateway` refuses until `ALLOW_REAL_TRADING=1`, `HFT_CANARY_ENABLED=1`, a valid sandbox certification file, a non-sandbox `hft_execution` token, fresh feed health, canary notional caps, symbol caps, loss caps, and kill-switch checks all pass. Binance and IB adapters are thin client wrappers and are only invoked after those gates.
+
+Rollback sets the HFT kill switch and writes `hft_canary_rollback` evidence. The canary layer adds infrastructure only; it does not activate real-money trading by itself.
+
+**Files:** `core/authority/hft_token.py`, `core/execution/hft.py`, `core/execution/hft_canary.py`, `trading/kernel/scheduler.py`
 
 ---
 

@@ -8,6 +8,15 @@ from .hft import (
     HFTRiskLimits,
     HFTSandboxGateway,
 )
+from .hft_canary import (
+    BinanceHFTExecutionAdapter,
+    CanaryConfig,
+    CanaryGate,
+    CodeGatedHFTGateway,
+    IBHFTExecutionAdapter,
+    SandboxCertification,
+    write_sandbox_certification,
+)
 from .shadow import execute_shadow_authorized
 
 META = {
@@ -23,6 +32,13 @@ __all__ = [
     "HFTOrderResult",
     "HFTRiskLimits",
     "HFTSandboxGateway",
+    "BinanceHFTExecutionAdapter",
+    "CanaryConfig",
+    "CanaryGate",
+    "CodeGatedHFTGateway",
+    "IBHFTExecutionAdapter",
+    "SandboxCertification",
     "execute_shadow_authorized",
+    "write_sandbox_certification",
 ]
 

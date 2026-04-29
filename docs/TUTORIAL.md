@@ -196,7 +196,42 @@ This records audit evidence but does not touch Binance, IB, MT5, Deriv, Telegram
 
 ---
 
-## Tutorial 5: Run the Live Dashboard
+## Tutorial 5: Code-Gated HFT Canary Routing
+
+The canary layer is off by default. Real routing refuses unless all gates pass:
+
+```text
+ALLOW_REAL_TRADING=1
+HFT_CANARY_ENABLED=1
+HFT_SANDBOX_CERTIFICATION=trading_data/hft/sandbox_certification.json
+HFT_CANARY_MAX_NOTIONAL=10
+HFT_CANARY_DAILY_LOSS_CAP=5
+HFT_CANARY_MAX_ACTIVE_SYMBOLS=1
+HFT_CANARY_SYMBOL=BTCUSDT
+```
+
+The certification file is local-only and generated after sandbox validation:
+
+```python
+from core.execution import write_sandbox_certification
+
+write_sandbox_certification("trading_data/hft/sandbox_certification.json")
+```
+
+Even with env gates enabled, the request still needs a non-sandbox `hft_execution` token, fresh feed health, canary limits, and kill switch clearance. Rollback writes audit evidence and activates the HFT kill switch:
+
+```python
+from core.execution import CodeGatedHFTGateway, BinanceHFTExecutionAdapter
+
+gateway = CodeGatedHFTGateway(broker=BinanceHFTExecutionAdapter(client=None))
+gateway.rollback("operator_requested")
+```
+
+Passing `client=None` keeps the adapter non-operational. Production clients must be injected locally and never committed.
+
+---
+
+## Tutorial 6: Run the Live Dashboard
 
 The dashboard shows real-time PnL, regime, circuit breaker state, and a kill switch.
 

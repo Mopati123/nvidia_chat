@@ -84,6 +84,8 @@ The microstructure layer also exposes read-only order-book feed adapters. Binanc
 
 Sandbox HFT execution uses a separate `hft_execution` token scope. The scheduler must mint a narrow token for broker, symbol, side, notional, slippage, order count, TTL, strategy id, and sandbox-only mode before the fake HFT gateway can accept an order. Real broker routing remains disabled.
 
+Code-gated HFT canary routing is present but off by default. It refuses unless `ALLOW_REAL_TRADING=1`, `HFT_CANARY_ENABLED=1`, sandbox certification, non-sandbox HFT token scope, fresh feed health, hard risk limits, and kill-switch checks all pass. Rollback writes evidence and activates the HFT kill switch.
+
 The overlay also adds `registry/` and `config/` artifacts that describe module placement, metadata requirements, system invariants, and the design tensor. Validators in `tools/` check metadata, import direction, scheduler-only token minting, and token validation at execution boundaries. The `core/self_healing` package is intentionally inert for now: it provides the skeleton for future perception, violation detection, repair planning, repair execution, and revalidation once the validators are trusted.
 
 ---
