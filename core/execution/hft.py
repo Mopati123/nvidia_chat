@@ -141,6 +141,7 @@ class HFTSandboxGateway:
         *,
         token: Any,
         feed_health: Optional[Dict[str, Any]] = None,
+        validation_context_override: Optional[Dict[str, Any]] = None,
     ) -> HFTOrderResult:
         """Validate token/risk gates and submit to the fake sandbox broker."""
         duplicate = self._idempotency_results.get(request.idempotency_key)
@@ -150,7 +151,7 @@ class HFTSandboxGateway:
         validation = validate_token(
             token,
             operation="hft_execution",
-            context=request.validation_context(),
+            context=validation_context_override or request.validation_context(),
         )
         if not validation.valid:
             return self._refuse(request, validation.reason, token_status=validation.reason)
@@ -248,6 +249,16 @@ class HFTSandboxGateway:
             payload={"reason": reason},
             log_path=self.evidence_log,
         )
+
+    def refuse_request(
+        self,
+        request: HFTOrderRequest,
+        reason: str,
+        *,
+        token_status: str = "not_submitted",
+    ) -> HFTOrderResult:
+        """Public refusal helper for higher-level gated execution wrappers."""
+        return self._refuse(request, reason, token_status=token_status)
 
     def _risk_refusal_reason(
         self,
@@ -355,4 +366,3 @@ class HFTSandboxGateway:
             payload=payload,
             log_path=self.evidence_log,
         )
-
