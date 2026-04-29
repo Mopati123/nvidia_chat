@@ -1,12 +1,12 @@
-"""Canonical simulation and proposal-generation adapters."""
+"""Canonical read-only order-book feed adapters."""
 
-from trading.path_integral.trajectory_generator import PathIntegralEngine
-from trading.microstructure.order_book import OrderBookEngine, OrderBookSignals, OrderBookSnapshot
 from trading.microstructure.feeds import (
     BinanceDepthFeed,
     FeedHealth,
+    FeedSnapshotError,
     FakeOrderBookFeed,
     IBDepthFeed,
+    InteractiveBrokersDepthFeed,
     OrderBookFeed,
     ReplayOrderBookFeed,
 )
@@ -14,18 +14,17 @@ from trading.microstructure.feeds import (
 META = {
     "tier": "rootfile",
     "layer": "core.simulation",
-    "operator_type": "simulation_adapter",
+    "operator_type": "order_book_feed_adapter",
 }
 
 __all__ = [
-    "PathIntegralEngine",
-    "OrderBookEngine",
-    "OrderBookSignals",
-    "OrderBookSnapshot",
     "BinanceDepthFeed",
     "FeedHealth",
+    "FeedSnapshotError",
     "FakeOrderBookFeed",
     "IBDepthFeed",
+    "InteractiveBrokersDepthFeed",
     "OrderBookFeed",
     "ReplayOrderBookFeed",
 ]
+

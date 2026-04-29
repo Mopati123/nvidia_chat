@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import builtins
+import json
 import math
 
 import pytest
@@ -185,3 +187,105 @@ def test_order_book_analytics_do_not_import_execution_surfaces(monkeypatch):
     signals = OrderBookEngine("EURUSD").process_snapshot(_book())
 
     assert math.isfinite(signals.depth_imbalance)
+
+
+async def _first_snapshot(feed):
+    async for snapshot in feed.snapshots():
+        return snapshot
+    raise AssertionError("feed did not emit a snapshot")
+
+
+def test_fake_order_book_feed_emits_normalized_snapshots():
+    from trading.microstructure import FakeOrderBookFeed
+
+    feed = FakeOrderBookFeed([_book("BTCUSDT", timestamp=10.0)], symbol="BTCUSDT")
+    snapshot = asyncio.run(_first_snapshot(feed))
+
+    assert snapshot.symbol == "BTCUSDT"
+    assert snapshot.best_bid == pytest.approx(1.0998)
+    assert feed.health_snapshot()["last_update_ts"] == pytest.approx(10.0)
+
+
+def test_replay_feed_reads_jsonl_and_rejects_malformed_snapshots(tmp_path):
+    from trading.microstructure import FeedSnapshotError, ReplayOrderBookFeed
+
+    replay_path = tmp_path / "book.jsonl"
+    replay_path.write_text(json.dumps(_book("ETHUSDT")) + "\n", encoding="utf-8")
+    feed = ReplayOrderBookFeed.from_jsonl(replay_path, symbol="ETHUSDT")
+
+    snapshot = asyncio.run(_first_snapshot(feed))
+    assert snapshot.symbol == "ETHUSDT"
+
+    malformed = tmp_path / "malformed.jsonl"
+    bad_book = _book("ETHUSDT")
+    bad_book["asks"] = []
+    malformed.write_text(json.dumps(bad_book) + "\n", encoding="utf-8")
+    bad_feed = ReplayOrderBookFeed.from_jsonl(malformed, symbol="ETHUSDT")
+
+    with pytest.raises(FeedSnapshotError):
+        asyncio.run(_first_snapshot(bad_feed))
+
+
+def test_feed_health_tracks_staleness_drops_and_errors():
+    from trading.microstructure import FeedHealth
+
+    health = FeedHealth(source="fake", stale_after_seconds=0.01)
+    assert health.stale is True
+
+    health.mark_update(timestamp=1.0, queue_depth=2)
+    health.mark_drop()
+    health.mark_error("synthetic failure")
+
+    payload = health.to_dict()
+    assert payload["queue_depth"] == 2
+    assert payload["dropped_updates"] == 1
+    assert payload["stale"] is True
+    assert payload["last_error"] == "synthetic failure"
+
+
+def test_binance_depth_feed_parses_public_depth_payload_without_connecting():
+    from trading.microstructure import BinanceDepthFeed
+
+    feed = BinanceDepthFeed("BTCUSDT")
+    snapshot = feed.parse_message(
+        {
+            "E": 123000,
+            "bids": [["100.0", "2.0"], ["99.5", "1.0"]],
+            "asks": [["100.5", "1.5"], ["101.0", "1.0"]],
+        }
+    )
+
+    assert snapshot.symbol == "BTCUSDT"
+    assert snapshot.timestamp == pytest.approx(123.0)
+    assert snapshot.best_bid == pytest.approx(100.0)
+    assert snapshot.best_ask == pytest.approx(100.5)
+
+
+def test_ib_depth_feed_bridges_market_depth_callbacks():
+    from trading.microstructure import IBDepthFeed
+
+    feed = IBDepthFeed("AAPL", queue_size=2)
+    assert feed.apply_depth_update(position=0, operation=0, side="bid", price=199.9, size=10) is None
+    snapshot = feed.apply_depth_update(position=0, operation=0, side="ask", price=200.1, size=8)
+
+    assert snapshot is not None
+    assert snapshot.best_bid == pytest.approx(199.9)
+    assert snapshot.best_ask == pytest.approx(200.1)
+    streamed = asyncio.run(_first_snapshot(feed))
+    assert streamed.symbol == "AAPL"
+
+
+def test_order_book_feeds_do_not_import_execution_surfaces(monkeypatch):
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith("trading.brokers") or name.startswith("apps.telegram"):
+            raise AssertionError(f"feed imported execution surface {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    from trading.microstructure import FakeOrderBookFeed
+
+    snapshot = asyncio.run(_first_snapshot(FakeOrderBookFeed([_book()], symbol="EURUSD")))
+    assert snapshot.symbol == "EURUSD"

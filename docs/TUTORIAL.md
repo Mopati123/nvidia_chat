@@ -121,7 +121,36 @@ Important: these signals can change scoring through optional `S_HFT`, but they d
 
 ---
 
-## Tutorial 3: Run the Live Dashboard
+## Tutorial 3: Replay Read-Only Order-Book Feeds
+
+The feed layer converts live or replayed depth data into the same `OrderBookSnapshot` shape used by analytics. Fake and replay feeds are safe for CI because they never connect to brokers or execution APIs.
+
+```python
+import asyncio
+from trading.microstructure import FakeOrderBookFeed
+
+book = {
+    "symbol": "BTCUSDT",
+    "timestamp": 1.0,
+    "bids": [["100.0", "2.0"]],
+    "asks": [["100.5", "1.5"]],
+}
+
+async def main():
+    feed = FakeOrderBookFeed([book], symbol="BTCUSDT")
+    async for snapshot in feed.snapshots():
+        print(snapshot.to_dict())
+        print(feed.health_snapshot())
+        break
+
+asyncio.run(main())
+```
+
+`BinanceDepthFeed` is read-only and uses Binance public depth WebSockets. `IBDepthFeed` is a read-only callback bridge for IB/TWS market-depth updates. Neither adapter can place orders.
+
+---
+
+## Tutorial 4: Run the Live Dashboard
 
 The dashboard shows real-time PnL, regime, circuit breaker state, and a kill switch.
 

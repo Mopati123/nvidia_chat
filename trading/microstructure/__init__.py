@@ -9,6 +9,16 @@ from .tick_processor import TickProcessor, OFICalculator
 from .flow_field import LiquidityPotentialField, FlowField
 from .microstate import MicroState, MicroStructure
 from .order_book import OrderBookEngine, OrderBookLevel, OrderBookSignals, OrderBookSnapshot
+from .feeds import (
+    BinanceDepthFeed,
+    FeedHealth,
+    FeedSnapshotError,
+    FakeOrderBookFeed,
+    IBDepthFeed,
+    InteractiveBrokersDepthFeed,
+    OrderBookFeed,
+    ReplayOrderBookFeed,
+)
 
 __all__ = [
     'TickProcessor',
@@ -21,4 +31,12 @@ __all__ = [
     'OrderBookLevel',
     'OrderBookSignals',
     'OrderBookSnapshot',
+    'BinanceDepthFeed',
+    'FeedHealth',
+    'FeedSnapshotError',
+    'FakeOrderBookFeed',
+    'IBDepthFeed',
+    'InteractiveBrokersDepthFeed',
+    'OrderBookFeed',
+    'ReplayOrderBookFeed',
 ]
