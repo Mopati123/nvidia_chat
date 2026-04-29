@@ -220,7 +220,9 @@ S[γ] = w_L*S_L + w_T*S_T + w_E*S_E + w_R*S_R + w_HFT*S_HFT
 
 `S_HFT` rewards alignment between the proposed path and book pressure, and heavily penalizes crossed/inverted books. This improves entry timing and trajectory filtering while preserving the rootfile invariant that only scheduler-issued tokens can authorize execution.
 
-**Files:** `trading/microstructure/order_book.py`, `trading/action/upgraded_components.py`, `core/simulation/order_book.py`
+The read-only feed layer can now normalize Binance public depth streams, IB/TWS market-depth callbacks, and fake/replay CI data into the same `OrderBookSnapshot` shape. Feed adapters expose health metrics (`update_age_seconds`, queue depth, dropped updates, reconnect count, stale status, and last error), but they do not import execution surfaces or place orders.
+
+**Files:** `trading/microstructure/order_book.py`, `trading/microstructure/feeds.py`, `trading/action/upgraded_components.py`, `core/simulation/order_book.py`
 
 ---
 

@@ -20,6 +20,7 @@
     "trading.path_integral.trajectory_generator",
     "trading.geometry",
     "trading.microstructure.order_book",
+    "trading.microstructure.feeds",
     "trading.agents",
     "trading.rl"
   ],

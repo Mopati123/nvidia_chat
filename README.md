@@ -80,6 +80,8 @@ The repository now includes a non-breaking rootfile overlay that makes the archi
 
 The law of motion is: data prepares state, simulation proposes, orchestration authorizes, execution acts, and evidence records. Shadow and live execution boundaries now validate scheduler-issued authority through `core.authority.validate_token(...)`; proposal modules remain token-free so analysis stays cheap and safe.
 
+The microstructure layer also exposes read-only order-book feed adapters. Binance public depth streams, IB/TWS market-depth callbacks, and fake/replay fixtures all normalize into `OrderBookSnapshot` objects with feed-health metadata. These feeds do not place orders or import broker execution surfaces.
+
 The overlay also adds `registry/` and `config/` artifacts that describe module placement, metadata requirements, system invariants, and the design tensor. Validators in `tools/` check metadata, import direction, scheduler-only token minting, and token validation at execution boundaries. The `core/self_healing` package is intentionally inert for now: it provides the skeleton for future perception, violation detection, repair planning, repair execution, and revalidation once the validators are trusted.
 
 ---
