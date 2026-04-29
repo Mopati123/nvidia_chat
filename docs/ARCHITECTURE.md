@@ -194,13 +194,43 @@ S[γ] = w_L · S_L + w_T · S_T + w_E · S_E + w_R · S_R
 
 **File:** `trading/path_integral/trajectory_generator.py`
 
+### Order-Book Microstructure Overlay
+
+The order-book overlay adds an analytics-only Stage 2.5 after state construction when `raw_data["order_book"]` is present. It does not open WebSockets, poll brokers, mint tokens, place orders, or bypass scheduler authority. It converts normalized depth snapshots into HFT-style observables and stores them on `PipelineContext.order_book`, `PipelineContext.hft_signals`, and `market_state["hft_signals"]`.
+
+```
+Raw depth snapshot -> OrderBookEngine -> O19-O25 signals -> optional S_HFT cost
+```
+
+| Signal | Meaning | Execution behavior |
+|--------|---------|--------------------|
+| `depth_imbalance` | Bid/ask depth asymmetry | Scoring only |
+| `layering_score` | Uniform resting-size layering risk | Scoring only |
+| `enhanced_microprice` | Depth-weighted fair price | Scoring only |
+| `pressure_ratio` | Bid/ask pressure continuation | Scoring only |
+| `iceberg_probability` | Refill-after-drain likelihood | Scoring only |
+| `book_inversion` | Crossed-book circuit-breaker observable | Penalizes action; never executes |
+| `cumulative_delta` | Time-integrated signed depth change | Scoring only |
+
+When HFT signals exist, the action functional becomes:
+
+```
+S[γ] = w_L*S_L + w_T*S_T + w_E*S_E + w_R*S_R + w_HFT*S_HFT
+```
+
+`S_HFT` rewards alignment between the proposed path and book pressure, and heavily penalizes crossed/inverted books. This improves entry timing and trajectory filtering while preserving the rootfile invariant that only scheduler-issued tokens can authorize execution.
+
+**Files:** `trading/microstructure/order_book.py`, `trading/action/upgraded_components.py`, `core/simulation/order_book.py`
+
 ---
 
-## 18-Operator Market Hamiltonian
+## 25-Operator Market Hamiltonian
 
 ```
-H_market = Σ_{k=1}^{18} αₖ · Oₖ
+H_market = Σ_{k=1}^{25} αₖ · Oₖ
 ```
+
+O1-O18 remain the legacy ICT/SMC operator contract. O19-O25 are analytics-only order-book observables; they enrich scoring and evidence but do not authorize execution.
 
 ### Potential Operators (O1–O7)
 
@@ -234,6 +264,18 @@ H_market = Σ_{k=1}^{18} αₖ · Oₖ
 ```
 ⟨ψ|H|ψ⟩ = ψᵀ · H_market · ψ    (full quantum readout)
 ```
+
+### Order-Book Operators (O19-O25)
+
+| # | Operator | Formula | Microstructure Concept |
+|---|----------|---------|------------------------|
+| O19 | `depth_imbalance` | `(bid_depth - ask_depth) / total_depth` | Depth pressure |
+| O20 | `volume_layering` | low coefficient of variation across top levels | Layering risk |
+| O21 | `enhanced_microprice` | depth-weighted fair price | Entry refinement |
+| O22 | `bid_ask_pressure` | bid pressure / ask pressure | Pressure continuation |
+| O23 | `iceberg_detection` | drain-and-refill probability | Hidden liquidity |
+| O24 | `cumulative_delta_pressure` | cumulative signed depth change | Flow persistence |
+| O25 | `book_inversion` | crossed-book indicator | Circuit-breaker observable |
 
 **File:** `trading/operators/operator_registry.py`
 
@@ -283,7 +325,7 @@ CRYPTOGRAPHIC AUDIT CHAIN (Ed25519 + Merkle Tree)
 | 5. TRAJECTORY_GENERATION | RK4 integration → N candidate paths with geodesic-seeded initial conditions |
 | 6. RAMANUJAN_COMPRESSION | Cluster paths into behavioral families; reduce redundancy |
 | 7. ADMISSIBILITY_FILTERING | Π_total gate: discard paths violating constraints |
-| 8. ACTION_EVALUATION | Compute S[γ] = w_L·S_L + w_T·S_T + w_E·S_E + w_R·S_R for each path |
+| 8. ACTION_EVALUATION | Compute S[γ] = w_L·S_L + w_T·S_T + w_E·S_E + w_R·S_R (+ optional S_HFT) for each path |
 | 9. PATH_INTEGRAL | Weight each path: P ∝ exp(−S/ℏ); calibrate ℏ for ESS≈0.5 |
 | 10. INTERFERENCE_SELECTION | Destructive interference cancels high-action paths |
 | 11. PATH_SELECTION | γ* = argmax weight = argmin action |
@@ -360,8 +402,8 @@ PHYSICS CORE (taep/)
 TRADING ENGINE (trading/)
 ├── Geometry: ϕ → metric → Γ → K → regime
 ├── Path Integral: RK4 → action → γ* selection
-├── Operators: 18-operator ICT registry
-├── Microstructure: OFI, microprice, flow field
+├── Operators: 25-operator ICT + order-book registry
+├── Microstructure: OFI, microprice, flow field, order-book depth signals
 ├── Memory: 128-dim FAISS embeddings + RAG bias
 ├── RL: PPO agent (166-dim state) → weight adaptation
 ├── Regime: ADX+Vol detector → parameter wiring

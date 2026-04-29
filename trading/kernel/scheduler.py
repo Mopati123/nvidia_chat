@@ -160,7 +160,7 @@ class Scheduler:
         return self.action_weights.copy()
         
     def _initialize_weights(self):
-        """Initialize uniform weights over 18 operators"""
+        """Initialize uniform weights over legacy O1-O18 operators."""
         operators = [
             "kinetic", "liquidity_pool", "order_block", "fvg", "macro_time",
             "price_delivery", "regime", "session", "risk", "sailing_lane",

@@ -276,7 +276,7 @@ class PricePredictorInference:
                 candle.get('volume', 0)
             ])
         
-        # Add operator scores (18 operators)
+        # Add legacy O1-O18 operator scores
         op_scores = operator_scores or {}
         default_ops = {
             'kinetic': 0.5, 'potential': 0.5, 'liquidity': 0.5, 'ob': 0.5,

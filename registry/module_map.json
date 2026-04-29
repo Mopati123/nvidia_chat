@@ -19,6 +19,7 @@
   "core.simulation": [
     "trading.path_integral.trajectory_generator",
     "trading.geometry",
+    "trading.microstructure.order_book",
     "trading.agents",
     "trading.rl"
   ],
@@ -34,4 +35,3 @@
     "trading.evidence.evidence_chain"
   ]
 }
-

@@ -1,1 +1,1 @@
-"""18-operator registry for ICT/SMC market analysis"""
+"""25-operator registry for ICT/SMC and order-book market analysis."""
