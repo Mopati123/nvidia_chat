@@ -150,7 +150,53 @@ asyncio.run(main())
 
 ---
 
-## Tutorial 4: Run the Live Dashboard
+## Tutorial 4: Run A Sandbox HFT Order
+
+Sandbox HFT execution requires a scheduler-issued `hft_execution` token. A normal `live_execution` token is refused.
+
+```python
+from core.authority import HFTExecutionScope, issue_hft_execution_token
+from core.execution import HFTOrderRequest, HFTSandboxGateway
+from trading.kernel.scheduler import Scheduler
+
+scheduler = Scheduler()
+scope = HFTExecutionScope(
+    broker="fake",
+    symbol="BTCUSDT",
+    side="buy",
+    max_notional=50.0,
+    max_slippage_bps=2.0,
+    max_order_count=2,
+    ttl_seconds=60.0,
+    strategy_id="depth_accumulation_demo",
+    sandbox_only=True,
+)
+token = issue_hft_execution_token(scheduler, scope)
+
+request = HFTOrderRequest(
+    broker="fake",
+    symbol="BTCUSDT",
+    side="buy",
+    quantity=0.1,
+    price=100.0,
+    max_slippage_bps=1.0,
+    strategy_id="depth_accumulation_demo",
+    idempotency_key="demo-001",
+)
+
+result = HFTSandboxGateway().execute(
+    request,
+    token=token,
+    feed_health={"stale": False, "update_age_seconds": 0.1},
+)
+print(result.to_dict())
+```
+
+This records audit evidence but does not touch Binance, IB, MT5, Deriv, Telegram, or real broker routing.
+
+---
+
+## Tutorial 5: Run the Live Dashboard
 
 The dashboard shows real-time PnL, regime, circuit breaker state, and a kill switch.
 

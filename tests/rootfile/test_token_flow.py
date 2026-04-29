@@ -7,14 +7,23 @@ from pathlib import Path
 import numpy as np
 
 from apps.telegram.trading_live import LiveTradingSystem
-from core.authority.execution_token import issue_execution_token
+from core.authority.execution_token import issue_execution_token, issue_hft_execution_token
+from core.authority.hft_token import HFTExecutionScope
+from core.authority.token_validator import validate_token
+from core.execution.hft import (
+    FakeHFTBroker,
+    HFTOrderRequest,
+    HFTRiskLimits,
+    HFTSandboxGateway,
+)
 from core.execution.shadow import execute_shadow_authorized
-from tachyonic_chain.audit_log import append_execution_evidence
+from tachyonic_chain.audit_log import append_execution_evidence, verify_execution_evidence_chain
 from tools.token_flow_validator import TokenFlowValidator
 from trading.brokers.deriv_broker import DerivBroker, DerivOrder
 import trading.brokers.mt5_broker as mt5_module
 from trading.brokers.mt5_broker import MT5Broker, MT5Order
 from trading.kernel.apex_engine import ExecutionOutcome
+from trading.kernel.scheduler import Scheduler
 
 
 def make_ohlcv(n: int = 24) -> list[dict]:
@@ -160,3 +169,166 @@ def test_token_flow_validator_accepts_direct_broker_boundaries():
 
     assert validator.validate_file("trading/brokers/mt5_broker.py").valid
     assert validator.validate_file("trading/brokers/deriv_broker.py").valid
+
+
+def _hft_scope(**overrides):
+    values = {
+        "broker": "fake",
+        "symbol": "BTCUSDT",
+        "side": "buy",
+        "max_notional": 50.0,
+        "max_slippage_bps": 2.0,
+        "max_order_count": 2,
+        "ttl_seconds": 60.0,
+        "strategy_id": "test_depth_accumulation",
+        "sandbox_only": True,
+    }
+    values.update(overrides)
+    return HFTExecutionScope(**values)
+
+
+def _hft_request(**overrides):
+    values = {
+        "broker": "fake",
+        "symbol": "BTCUSDT",
+        "side": "buy",
+        "quantity": 0.1,
+        "price": 100.0,
+        "max_slippage_bps": 1.0,
+        "strategy_id": "test_depth_accumulation",
+        "idempotency_key": "idem_1",
+    }
+    values.update(overrides)
+    return HFTOrderRequest(**values)
+
+
+def test_live_execution_token_cannot_authorize_hft_execution():
+    token = issue_execution_token("live_execution", budget=1.0)
+
+    result = validate_token(token, operation="hft_execution", context=_hft_request().validation_context())
+
+    assert not result.valid
+    assert "does not authorize" in result.reason
+
+
+def test_scheduler_issued_hft_token_accepts_sandbox_fake_order(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope())
+    gateway = HFTSandboxGateway(evidence_log=str(tmp_path / "hft.jsonl"))
+
+    result = gateway.execute(_hft_request(), token=token, feed_health={"stale": False, "update_age_seconds": 0.1})
+
+    assert result.accepted is True
+    assert result.outcome == "accepted"
+    assert result.order_id
+    assert result.evidence_hash
+    assert gateway.broker.orders
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_gateway_refuses_missing_wrong_and_expired_tokens(tmp_path: Path):
+    scheduler = Scheduler()
+    expired = issue_hft_execution_token(scheduler, _hft_scope(ttl_seconds=-1.0))
+    wrong_symbol = issue_hft_execution_token(scheduler, _hft_scope(symbol="ETHUSDT"))
+    gateway = HFTSandboxGateway(evidence_log=str(tmp_path / "hft.jsonl"))
+    request = _hft_request()
+
+    assert gateway.execute(request, token=None).outcome == "refused"
+    assert gateway.execute(_hft_request(idempotency_key="idem_2"), token=expired).outcome == "refused"
+    wrong = gateway.execute(_hft_request(idempotency_key="idem_3"), token=wrong_symbol)
+
+    assert wrong.outcome == "refused"
+    assert "symbol" in wrong.reason
+    assert not gateway.broker.orders
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_hard_limits_block_unsafe_orders_and_kill_switch(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope(max_notional=100.0, max_order_count=5))
+    gateway = HFTSandboxGateway(
+        limits=HFTRiskLimits(
+            max_orders_per_minute=1,
+            max_open_notional=20.0,
+            per_symbol_exposure=20.0,
+            stale_feed_cutoff_seconds=0.5,
+            max_slippage_bps=2.0,
+        ),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    stale = gateway.execute(_hft_request(idempotency_key="stale"), token=token, feed_health={"stale": True})
+    slippage = gateway.execute(
+        _hft_request(idempotency_key="slip", max_slippage_bps=3.0),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    accepted = gateway.execute(
+        _hft_request(idempotency_key="ok"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    rate_limited = gateway.execute(
+        _hft_request(idempotency_key="rate"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    gateway.trigger_kill_switch("test")
+    killed = gateway.execute(
+        _hft_request(idempotency_key="kill"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert stale.reason == "stale_feed"
+    assert slippage.reason == "hft token slippage limit exceeded"
+    assert accepted.outcome == "accepted"
+    assert rate_limited.reason == "orders_per_minute_limit_exceeded"
+    assert killed.reason == "kill_switch_active"
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_idempotency_prevents_duplicate_submission(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope())
+    broker = FakeHFTBroker()
+    gateway = HFTSandboxGateway(broker=broker, evidence_log=str(tmp_path / "hft.jsonl"))
+    request = _hft_request(idempotency_key="same")
+
+    first = gateway.execute(request, token=token, feed_health={"stale": False, "update_age_seconds": 0.1})
+    duplicate = gateway.execute(request, token=token, feed_health={"stale": False, "update_age_seconds": 0.1})
+
+    assert first.outcome == "accepted"
+    assert duplicate.outcome == "refused"
+    assert duplicate.reason == "duplicate_idempotency_key"
+    assert len(broker.orders) == 1
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_failed_canceled_and_reconciled_paths_emit_evidence(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope(max_order_count=5))
+    gateway = HFTSandboxGateway(
+        broker=FakeHFTBroker(fail_next=True),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+    failed = gateway.execute(
+        _hft_request(idempotency_key="fail"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    accepted_request = _hft_request(idempotency_key="accept")
+    accepted = gateway.execute(
+        accepted_request,
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    canceled = gateway.cancel_order(accepted_request, token=token, order_id=accepted.order_id)
+    reconciled = gateway.reconcile_order(accepted_request, order_id=accepted.order_id, realized_pnl=1.23)
+
+    assert failed.outcome == "failed"
+    assert canceled.outcome == "canceled"
+    assert reconciled.outcome == "reconciled"
+    report = verify_execution_evidence_chain(tmp_path / "hft.jsonl")
+    assert report.valid

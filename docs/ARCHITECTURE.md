@@ -224,6 +224,14 @@ The read-only feed layer can now normalize Binance public depth streams, IB/TWS 
 
 **Files:** `trading/microstructure/order_book.py`, `trading/microstructure/feeds.py`, `trading/action/upgraded_components.py`, `core/simulation/order_book.py`
 
+### Sandbox HFT Execution Boundary
+
+HFT execution has a separate authority scope from normal live execution. A `live_execution` token cannot authorize HFT. The scheduler must mint an `hft_execution` token with broker, symbol, side, max notional, max slippage, max order count, TTL, strategy id, and sandbox-only scope.
+
+The first execution gateway is fake-broker only. It validates token scope, feed freshness, slippage, orders/minute, open notional, per-symbol exposure, daily loss cap, idempotency keys, cooldown state, and kill switch status before recording an accepted sandbox order. Accepted, refused, failed, canceled, and reconciled paths all append durable audit-chain evidence.
+
+**Files:** `core/authority/hft_token.py`, `core/execution/hft.py`, `trading/kernel/scheduler.py`
+
 ---
 
 ## 25-Operator Market Hamiltonian
