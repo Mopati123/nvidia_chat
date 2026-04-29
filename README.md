@@ -82,6 +82,8 @@ The law of motion is: data prepares state, simulation proposes, orchestration au
 
 The microstructure layer also exposes read-only order-book feed adapters. Binance public depth streams, IB/TWS market-depth callbacks, and fake/replay fixtures all normalize into `OrderBookSnapshot` objects with feed-health metadata. These feeds do not place orders or import broker execution surfaces.
 
+Sandbox HFT execution uses a separate `hft_execution` token scope. The scheduler must mint a narrow token for broker, symbol, side, notional, slippage, order count, TTL, strategy id, and sandbox-only mode before the fake HFT gateway can accept an order. Real broker routing remains disabled.
+
 The overlay also adds `registry/` and `config/` artifacts that describe module placement, metadata requirements, system invariants, and the design tensor. Validators in `tools/` check metadata, import direction, scheduler-only token minting, and token validation at execution boundaries. The `core/self_healing` package is intentionally inert for now: it provides the skeleton for future perception, violation detection, repair planning, repair execution, and revalidation once the validators are trusted.
 
 ---

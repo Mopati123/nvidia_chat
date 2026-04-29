@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from .hft_token import HFTExecutionScope
 from taep.scheduler.execution_token import ExecutionTokenManager
 
 META = {
@@ -46,4 +47,12 @@ def issue_trading_token(scheduler: Any, trajectory: Optional[Dict[str, Any]] = N
     if issue is None:
         raise TypeError("scheduler does not expose a token issuance method")
     return issue(trajectory)
+
+
+def issue_hft_execution_token(scheduler: Any, scope: HFTExecutionScope) -> AuthorityToken:
+    """Ask the scheduler to mint scoped HFT execution authority."""
+    issue = getattr(scheduler, "issue_hft_execution_token", None)
+    if issue is None:
+        raise TypeError("scheduler does not expose HFT token issuance")
+    return issue(scope)
 
