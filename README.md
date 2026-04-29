@@ -80,6 +80,8 @@ The repository now includes a non-breaking rootfile overlay that makes the archi
 
 The law of motion is: data prepares state, simulation proposes, orchestration authorizes, execution acts, and evidence records. Shadow and live execution boundaries now validate scheduler-issued authority through `core.authority.validate_token(...)`; proposal modules remain token-free so analysis stays cheap and safe.
 
+Scheduler collapse authorization is now guarded by an internal collapse authority lease. The lease is not a replacement for the cryptographic scheduler `ExecutionToken`; it is a bounded concurrency and budget reservation that must exist before the scheduler can mint the token, and it is released after execution or at epoch cleanup. This prevents overlapping collapses and budget over-commitment while preserving the existing public token API.
+
 The microstructure layer also exposes read-only order-book feed adapters. Binance public depth streams, IB/TWS market-depth callbacks, and fake/replay fixtures all normalize into `OrderBookSnapshot` objects with feed-health metadata. These feeds do not place orders or import broker execution surfaces.
 
 Sandbox HFT execution uses a separate `hft_execution` token scope. The scheduler must mint a narrow token for broker, symbol, side, notional, slippage, order count, TTL, strategy id, and sandbox-only mode before the fake HFT gateway can accept an order. Real broker routing remains disabled.

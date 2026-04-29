@@ -177,56 +177,60 @@ class ApexEngine:
             return result
 
         # Advance to COLLAPSED — token is now valid
-        self._transition(EngineState.CONSTRAINED, EngineState.COLLAPSED)
+        try:
+            self._transition(EngineState.CONSTRAINED, EngineState.COLLAPSED)
 
-        # Validate token before using it
-        if token is None or not token.is_valid():
-            self._engine_state = EngineState.IDLE
-            result = ExecutionResult(
-                outcome=ExecutionOutcome.REFUSED,
-                token=None,
-                trajectory=None,
-                evidence_hash=self._compute_refusal_hash(proposal),
-                execution_time_ms=(time.time() - start_time) * 1000,
-                mode=mode,
-                refusal_reason="Invalid ExecutionToken after scheduler collapse"
+            # Validate token before using it
+            if token is None or not token.is_valid():
+                self._engine_state = EngineState.IDLE
+                result = ExecutionResult(
+                    outcome=ExecutionOutcome.REFUSED,
+                    token=None,
+                    trajectory=None,
+                    evidence_hash=self._compute_refusal_hash(proposal),
+                    execution_time_ms=(time.time() - start_time) * 1000,
+                    mode=mode,
+                    refusal_reason="Invalid ExecutionToken after scheduler collapse"
+                )
+                self.execution_history.append(result)
+                return result
+
+            # Step 5: State update — gated on COLLAPSED state
+            selected_traj = self._select_best_trajectory(admissible, token)
+            self._transition(EngineState.COLLAPSED, EngineState.EXECUTING)
+
+            if mode == ExecutionMode.LIVE:
+                self._execute_live(selected_traj, market_state)
+            else:
+                self._execute_shadow(selected_traj, market_state)
+
+            # Step 6: Reconciliation
+            self._transition(EngineState.EXECUTING, EngineState.RECONCILED)
+            reconciliation_ok = self._reconcile_execution(selected_traj, market_state)
+
+            # Step 7: Evidence emission
+            self._transition(EngineState.RECONCILED, EngineState.EVIDENCED)
+            evidence_hash = self._emit_evidence(
+                proposal, admissible, token, selected_traj, market_state
             )
+
+            result = ExecutionResult(
+                outcome=ExecutionOutcome.SUCCESS if reconciliation_ok else ExecutionOutcome.ERROR,
+                token=token,
+                trajectory=selected_traj,
+                evidence_hash=evidence_hash,
+                execution_time_ms=(time.time() - start_time) * 1000,
+                mode=mode
+            )
+
             self.execution_history.append(result)
+            self._update_state(selected_traj, market_state)
+            self._engine_state = EngineState.IDLE  # Reset for next cycle
+
             return result
-
-        # Step 5: State update — gated on COLLAPSED state
-        selected_traj = self._select_best_trajectory(admissible, token)
-        self._transition(EngineState.COLLAPSED, EngineState.EXECUTING)
-
-        if mode == ExecutionMode.LIVE:
-            self._execute_live(selected_traj, market_state)
-        else:
-            self._execute_shadow(selected_traj, market_state)
-
-        # Step 6: Reconciliation
-        self._transition(EngineState.EXECUTING, EngineState.RECONCILED)
-        reconciliation_ok = self._reconcile_execution(selected_traj, market_state)
-
-        # Step 7: Evidence emission
-        self._transition(EngineState.RECONCILED, EngineState.EVIDENCED)
-        evidence_hash = self._emit_evidence(
-            proposal, admissible, token, selected_traj, market_state
-        )
-
-        result = ExecutionResult(
-            outcome=ExecutionOutcome.SUCCESS if reconciliation_ok else ExecutionOutcome.ERROR,
-            token=token,
-            trajectory=selected_traj,
-            evidence_hash=evidence_hash,
-            execution_time_ms=(time.time() - start_time) * 1000,
-            mode=mode
-        )
-
-        self.execution_history.append(result)
-        self._update_state(selected_traj, market_state)
-        self._engine_state = EngineState.IDLE  # Reset for next cycle
-
-        return result
+        finally:
+            if token is not None:
+                self.scheduler.release_execution_token(token)
     
     def _measure_entropy_change(self, 
                                trajectories: List[Dict], 

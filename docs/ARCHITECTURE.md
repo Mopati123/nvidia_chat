@@ -37,6 +37,8 @@ The authority invariant is intentionally simple: no shadow, live, or broker exec
 
 Schedulers remain the only components allowed to mint execution authority. Simulation and strategy modules are proposal generators only. If an execution boundary receives no token or an invalid token, it must refuse structurally and emit evidence rather than silently falling through.
 
+Collapse authority is now two-layered. `trading.kernel.token_authority.TokenAuthority` reserves a short-lived internal lease for concurrency and budget control; only then does the scheduler mint its cryptographic `ExecutionToken`. The engine releases the lease after authorized execution paths, and `epoch_end()` clears any stale leases. This keeps scheduler sovereignty intact while preventing overlapping or over-budget collapses.
+
 ### Overlay Migration Rule
 
 The first pass favors adapters and registry metadata over file moves. This keeps the runtime stable while allowing validators to reason about the intended architecture. Hard migration is deferred until rootfile tests, deterministic shadow smoke tests, and broader package tests are green.

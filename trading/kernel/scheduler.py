@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
+from .token_authority import AuthorityLease, TokenAuthority
+
 try:
     import torch
     TORCH_AVAILABLE = True
@@ -43,6 +45,9 @@ class ExecutionToken:
     trajectory_hash: str
     authorization_signature: str
     lambda_parameters: Dict[str, float]
+    authority_token_id: Optional[str] = None
+    budget_allocated: float = 0.0
+    budget_remaining: float = 0.0
     
     def verify(self) -> bool:
         """Verify token integrity"""
@@ -71,11 +76,27 @@ class Scheduler:
     Sole collapse authority. Scheduler sovereignty enforced.
     """
     
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(
+        self,
+        config: Optional[Dict] = None,
+        token_authority: Optional[TokenAuthority] = None,
+    ):
         self.config = config or {}
         self.state = SchedulerState()
         self.collapse_history: List[ExecutionToken] = []
         self._initialize_weights()
+        self.collapse_budget = float(self.config.get("collapse_budget", 1.0))
+        self.token_authority = token_authority or TokenAuthority(
+            max_active_tokens=int(self.config.get("max_active_collapses", 1)),
+            default_budget=self.collapse_budget,
+            total_budget=float(
+                self.config.get(
+                    "collapse_total_budget",
+                    self.collapse_budget * int(self.config.get("max_active_collapses", 1)),
+                )
+            ),
+        )
+        self._collapse_leases: Dict[str, AuthorityLease] = {}
         
         # RL integration (optional)
         self.use_rl = config.get('use_rl', False) if config else False
@@ -246,12 +267,38 @@ class Scheduler:
         
         # Select best trajectory via weighted energy (with RL if enabled)
         best_traj = self._select_trajectory(projected_trajectories, proposal)
+        requested_budget = self._collapse_budget_request(best_traj, delta_s)
+        lease = self.token_authority.acquire_lease(budget=requested_budget)
+        if lease is None:
+            logger.info(
+                "Scheduler refused collapse: no authority lease available "
+                "(requested_budget=%.6f)",
+                requested_budget,
+            )
+            return CollapseDecision.REFUSED, None
         
         # Issue ExecutionToken
-        token = self._issue_token(best_traj)
+        try:
+            token = self._issue_token(best_traj, authority_lease=lease)
+        except Exception:
+            self.token_authority.release_lease(lease)
+            raise
+
+        self._collapse_leases[token.token_id] = lease
         self.collapse_history.append(token)
         
         return CollapseDecision.AUTHORIZED, token
+
+    def _collapse_budget_request(self, trajectory: Dict, delta_s: float) -> float:
+        """Compute how much collapse authority budget this path should reserve."""
+        raw_budget = trajectory.get("action", delta_s)
+        try:
+            requested = float(raw_budget)
+        except (TypeError, ValueError):
+            return self.collapse_budget + 1.0
+        if not np.isfinite(requested):
+            return self.collapse_budget + 1.0
+        return max(0.0, abs(requested))
     
     def _select_trajectory(self, trajectories: List[Dict], market_state: Dict = None) -> Dict:
         """
@@ -420,7 +467,11 @@ class Scheduler:
                 self._last_rl_state = None
                 self._last_rl_action = None
     
-    def _issue_token(self, trajectory: Dict) -> ExecutionToken:
+    def _issue_token(
+        self,
+        trajectory: Dict,
+        authority_lease: Optional[AuthorityLease] = None,
+    ) -> ExecutionToken:
         """Cryptographic authorization token issuance"""
         timestamp = time.time()
         token_id = hashlib.sha256(f"{timestamp}:{trajectory.get('id','')}".encode()).hexdigest()[:16]
@@ -444,8 +495,28 @@ class Scheduler:
             operator_weights=self.state.operator_weights.copy(),
             trajectory_hash=traj_hash,
             authorization_signature=signature,
-            lambda_parameters=lambda_params
+            lambda_parameters=lambda_params,
+            authority_token_id=authority_lease.lease_id if authority_lease else None,
+            budget_allocated=authority_lease.budget_allocated if authority_lease else 0.0,
+            budget_remaining=authority_lease.budget_remaining if authority_lease else 0.0,
         )
+
+    def release_execution_token(self, token: Optional[ExecutionToken]) -> bool:
+        """Release the internal authority lease attached to a scheduler token."""
+        if token is None:
+            return False
+
+        lease = self._collapse_leases.pop(token.token_id, None)
+        if lease is None and token.authority_token_id:
+            lease = self.token_authority.get_lease(token.authority_token_id)
+        if lease is None:
+            return False
+        return self.token_authority.release_lease(lease)
+
+    def epoch_end(self) -> None:
+        """Release outstanding authority leases at epoch boundaries."""
+        self._collapse_leases.clear()
+        self.token_authority.release_all()
 
     def issue_hft_execution_token(self, scope):
         """Mint scoped sandbox HFT execution authority.
@@ -467,6 +538,8 @@ class Scheduler:
             "operator_weights": self.state.operator_weights,
             "learning_rate": self.state.learning_rate,
             "collapse_count": len(self.collapse_history),
+            "active_authority_leases": self.token_authority.active_count,
+            "authority_budget_available": self.token_authority.budget_available,
             "sovereignty": "SCHEDULER_SOLE_AUTHORITY",
             "refusal_first": True
         }
