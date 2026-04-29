@@ -1,7 +1,7 @@
 """
 H_constraints.py — Constraint Hamiltonian: projectors Π, admissibility A(t)
 
-All 18 operators declare constraints here.
+Legacy O1-O18 operators declare constraints here; O19-O25 order-book observables are analytics-only.
 Projectors are idempotent (Π² = Π) and self-adjoint (Π† = Π).
 Refusal-first: default is rejection.
 """

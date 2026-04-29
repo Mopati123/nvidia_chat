@@ -50,7 +50,7 @@ export DAILY_LOSS_LIMIT=500
 ### Step 2: Launch
 
 ```bash
-python start_paper_trading.py
+python -m scripts.trading.start_paper_trading
 ```
 
 ### What to expect
@@ -82,7 +82,46 @@ The system will:
 
 ---
 
-## Tutorial 2: Run the Live Dashboard
+## Tutorial 2: Add Synthetic Order-Book Analytics
+
+The order-book overlay is analytics-only. It lets the pipeline score depth pressure without connecting to Binance, IB, MT5 depth, Deriv depth, or any live execution surface.
+
+```python
+from trading.pipeline.orchestrator import PipelineOrchestrator
+
+raw_data = {
+    "ohlcv": [],
+    "order_book": {
+        "symbol": "EURUSD",
+        "timestamp": 1.0,
+        "bids": [
+            {"price": 1.0998, "volume": 300},
+            {"price": 1.0997, "volume": 200},
+            {"price": 1.0996, "volume": 100},
+        ],
+        "asks": [
+            {"price": 1.1002, "volume": 100},
+            {"price": 1.1003, "volume": 100},
+            {"price": 1.1004, "volume": 100},
+        ],
+    },
+}
+
+context = PipelineOrchestrator(use_microstructure=False).execute(
+    raw_data,
+    symbol="EURUSD",
+    source="synthetic",
+)
+print(context.hft_signals)
+```
+
+Expected signals include `depth_imbalance`, `layering_score`, `enhanced_microprice`, `pressure_ratio`, `iceberg_probability`, `book_inversion`, and `cumulative_delta`.
+
+Important: these signals can change scoring through optional `S_HFT`, but they do not authorize broker execution. Live and shadow execution still require scheduler-issued tokens.
+
+---
+
+## Tutorial 3: Run the Live Dashboard
 
 The dashboard shows real-time PnL, regime, circuit breaker state, and a kill switch.
 
@@ -122,7 +161,7 @@ curl -X POST http://localhost:8080/kill/release
 
 ---
 
-## Tutorial 3: Connect to Deriv Broker
+## Tutorial 4: Connect to Deriv Broker
 
 ### Step 1: Get a Deriv API token
 
@@ -166,7 +205,7 @@ print('Deriv connected:', b.connect())
 
 ---
 
-## Tutorial 4: Connect to MetaTrader 5
+## Tutorial 5: Connect to MetaTrader 5
 
 ### Step 1: Install MetaTrader 5
 
@@ -198,7 +237,7 @@ print('MT5 connected:', b.connect())
 
 ---
 
-## Tutorial 5: Run the Telegram Bot
+## Tutorial 6: Run the Telegram Bot
 
 The Telegram bot lets you control the system and ask questions using AI models (Falcon, Nemotron 70B, Qwen 2.5).
 
@@ -228,7 +267,7 @@ export NVIDIA_API_KEY=your_nvidia_key
 ### Step 4: Launch
 
 ```bash
-python telegram_bot_full.py
+python -m apps.telegram.telegram_bot_full
 ```
 
 ### What the bot can do
@@ -245,10 +284,10 @@ python telegram_bot_full.py
 
 ```bash
 # T2 enhancements (geodesic seeds, FAISS, PPO, async, dashboard, Mojo)
-python -m pytest test_t2_integration.py -v
+python -m pytest validation/legacy/test_t2_integration.py -v
 
 # T3-A production hardening (circuit breaker, PnL divergence)
-python -m pytest test_t3a_integration.py -v
+python -m pytest validation/legacy/test_t3a_integration.py -v
 
 # Geometry unit tests
 python -m pytest tests/unit/test_geometry/ -v
@@ -259,15 +298,15 @@ python -m pytest tests/taep/ -v
 # Full test suite
 python -m pytest tests/ -v
 
-# All tests including integration
-python -m pytest . -v --ignore=test_full_system.py --ignore=test_integration.py
+# Maintained tests plus selected legacy integration tests
+python -m pytest tests/ validation/legacy/test_t2_integration.py validation/legacy/test_t3a_integration.py -v
 ```
 
 Expected output for T3-A:
 
 ```
-test_t3a_integration.py::TestT3A1CircuitBreaker::test_circuit_breaker_exists_on_orchestrator PASSED
-test_t3a_integration.py::TestT3A1CircuitBreaker::test_ten_failures_open_circuit PASSED
+validation/legacy/test_t3a_integration.py::TestT3A1CircuitBreaker::test_circuit_breaker_exists_on_orchestrator PASSED
+validation/legacy/test_t3a_integration.py::TestT3A1CircuitBreaker::test_ten_failures_open_circuit PASSED
 ...
 20 passed in 0.94s
 ```

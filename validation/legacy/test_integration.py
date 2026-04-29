@@ -61,11 +61,12 @@ scheduler = Scheduler()
 shadow = ShadowTradingLoop()
 emitter = EvidenceEmitter()
 
-assert len(registry.operators) == 18, f"Expected 18 operators, got {len(registry.operators)}"
+assert len(registry.operators) == 25, f"Expected 25 operators, got {len(registry.operators)}"
+assert len(registry._legacy_operator_names) == 18, "Legacy O1-O18 operator slice changed"
 assert constraints.get_admissibility_status()["projector_count"] > 0, "Missing constraint projectors"
 assert scheduler.get_scheduler_status()["refusal_first"] is True, "Scheduler refusal-first disabled"
 assert emitter is not None, "Evidence emitter failed to initialize"
-print(f"  OK - Loaded {len(registry.operators)} operators")
+print(f"  OK - Loaded {len(registry.operators)} operators (18 legacy + 7 order-book)")
 print("  OK - Scheduler, constraints, shadow loop, and evidence emitter initialized")
 
 # Test 2: Market data adapter

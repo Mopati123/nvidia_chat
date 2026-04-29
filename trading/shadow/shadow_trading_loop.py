@@ -111,7 +111,7 @@ class ShadowTradingLoop:
         market_state["bias"] = bias
         market_state["symbol"] = symbol
         
-        # B: Compute Hamiltonian from 18 operators
+        # B: Compute Hamiltonian from legacy O1-O18 operators plus optional analytics
         hamiltonian = self.operators.get_hamiltonian(market_state, {})
         
         # C: Generate trajectory family

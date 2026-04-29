@@ -56,6 +56,15 @@ class ActionConfig:
     spread_volatility_weight: float = 0.5
     acceleration_penalty: float = 0.3
 
+    # S_HFT (Order book) weights
+    hft_action_weight: float = 0.2
+    hft_depth_weight: float = 1.0
+    hft_pressure_weight: float = 0.7
+    hft_microprice_weight: float = 0.5
+    hft_layering_weight: float = 0.4
+    hft_iceberg_weight: float = 0.5
+    hft_inversion_penalty: float = 1_000_000.0
+
 
 class UpgradedActionComponents:
     """
@@ -276,6 +285,49 @@ class UpgradedActionComponents:
         avg_risk = total_risk / len(path) if path else 0.0
         
         return avg_risk
+
+    def compute_s_hft(self, path: List[Dict], hft_signals: Dict[str, float]) -> float:
+        """
+        Compute optional order-book cost S_HFT.
+
+        Lower cost means the depth book agrees with the path direction. Book
+        inversion is treated as a circuit-breaker-sized penalty, not alpha.
+        """
+        if not path or not hft_signals:
+            return 0.0
+
+        first_price = float(path[0].get('price', 0.0) or 0.0)
+        last_price = float(path[-1].get('price', first_price) or first_price)
+        if first_price <= 0:
+            trajectory_signal = 0.0
+        else:
+            trajectory_signal = float(np.tanh((last_price - first_price) / first_price * 10_000.0))
+
+        depth_signal = float(hft_signals.get('depth_imbalance', 0.0))
+        pressure_ratio = float(hft_signals.get('pressure_ratio', 1.0) or 1.0)
+        pressure_signal = float(np.tanh(np.log(max(pressure_ratio, 1e-9))))
+
+        microprice = float(hft_signals.get('enhanced_microprice', first_price) or first_price)
+        microprice_signal = 0.0
+        if first_price > 0:
+            microprice_signal = float(np.tanh((microprice - first_price) / first_price * 10_000.0))
+
+        layering = abs(float(hft_signals.get('layering_score', 0.0)))
+        iceberg = max(0.0, float(hft_signals.get('iceberg_probability', 0.0)))
+        inversion = max(0.0, float(hft_signals.get('book_inversion', 0.0)))
+
+        cfg = self.config
+        directional_cost = (
+            cfg.hft_depth_weight * abs(depth_signal - trajectory_signal) +
+            cfg.hft_pressure_weight * abs(pressure_signal - trajectory_signal) +
+            cfg.hft_microprice_weight * abs(microprice_signal - trajectory_signal)
+        )
+        risk_cost = (
+            cfg.hft_layering_weight * layering +
+            cfg.hft_iceberg_weight * iceberg +
+            cfg.hft_inversion_penalty * inversion
+        )
+        return float(directional_cost + risk_cost)
     
     def compute_full_action(self,
                            path: List[Dict],
@@ -318,12 +370,16 @@ class UpgradedActionComponents:
             s_e = 0.0
         
         s_r = self.compute_s_risk(path)
+        hft_signals = microstate.get('hft_signals') or microstate.get('market_state', {}).get('hft_signals', {})
+        has_hft = bool(hft_signals)
+        s_hft = self.compute_s_hft(path, hft_signals) if has_hft else 0.0
         
         # Weighted total
         w_l = weights.get('L', 0.5)
         w_t = weights.get('T', 0.3)
         w_e = weights.get('E', 0.1)
         w_r = weights.get('R', 0.1)
+        w_hft = weights.get('HFT', self.config.hft_action_weight)
         
         total_action = (
             w_l * s_l +
@@ -331,8 +387,10 @@ class UpgradedActionComponents:
             w_e * s_e +
             w_r * s_r
         )
+        if has_hft:
+            total_action += w_hft * s_hft
         
-        return {
+        result = {
             'S_L': s_l,
             'S_T': s_t,
             'S_E': s_e,
@@ -340,6 +398,10 @@ class UpgradedActionComponents:
             'total_action': total_action,
             'weights': weights,
         }
+        if has_hft:
+            result['S_HFT'] = s_hft
+            result['w_HFT'] = w_hft
+        return result
     
     def _compute_fvg_bonus(self, price: float, fvgs: List[Dict]) -> float:
         """

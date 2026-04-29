@@ -266,7 +266,7 @@ See [T3_ROADMAP.md](docs/roadmaps/T3_ROADMAP.md) for the full strategic plan.
 
 | Phase | What | Status |
 |-------|------|--------|
-| T1 (A/B/C) | Security, 18 operators, regime wiring | COMPLETE |
+| T1 (A/B/C) | Security, legacy O1-O18 operators, regime wiring | COMPLETE |
 | T2 (A–H) | Geodesic trajectories, FAISS, PPO, async, dashboard, Mojo | COMPLETE |
 | T3-A | Circuit breaker + PnL divergence | COMPLETE |
 | T3-C | Prometheus metrics + Grafana | Planned |

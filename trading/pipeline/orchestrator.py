@@ -83,6 +83,8 @@ class PipelineContext:
     # Stage outputs (checkpointed)
     raw_data: Dict = field(default_factory=dict)
     market_state: Dict = field(default_factory=dict)
+    order_book: Optional[Any] = None
+    hft_signals: Dict = field(default_factory=dict)
     ict_geometry: Dict = field(default_factory=dict)
     geometry_data: Dict = field(default_factory=dict)  # Riemannian geometry
     trajectories: List[Dict] = field(default_factory=list)
@@ -91,6 +93,7 @@ class PipelineContext:
     selected_path: Optional[Dict] = None
     proposal: Dict = field(default_factory=dict)
     collapse_decision: Optional[str] = None
+    execution_token: Optional[Any] = None
     execution_result: Dict = field(default_factory=dict)
     reconciliation_status: str = ""
     evidence_hash: str = ""
@@ -354,11 +357,35 @@ class PipelineOrchestrator:
             
             if micro:
                 context.market_state['microstructure'] = micro
+
+        order_book_result = self._stage_order_book_analysis(context)
         
         context.market_state['ohlcv'] = context.raw_data.get('ohlcv', [])
         context.market_state['symbol'] = context.symbol
         
-        return {'state_built': True}
+        return {'state_built': True, **order_book_result}
+
+    def _stage_order_book_analysis(self, context: PipelineContext) -> Dict:
+        """Stage 2.5: Optional analytics-only order-book depth analysis."""
+        raw_book = context.raw_data.get('order_book')
+        if not raw_book:
+            return {'order_book_analyzed': False}
+
+        from ..microstructure import OrderBookEngine
+
+        engine = OrderBookEngine(context.symbol)
+        signals = engine.process_snapshot(raw_book)
+        context.order_book = engine.current_book
+        context.hft_signals = signals.to_dict()
+        context.market_state['order_book'] = (
+            context.order_book.to_dict() if context.order_book is not None else {}
+        )
+        context.market_state['hft_signals'] = dict(context.hft_signals)
+
+        return {
+            'order_book_analyzed': True,
+            'hft_signals': dict(context.hft_signals),
+        }
     
     def _stage_ict_extraction(self, context: PipelineContext) -> Dict:
         """Stage 3: Extract ICT geometry + detect market regime.
@@ -559,6 +586,10 @@ class PipelineOrchestrator:
                 for i in range(n_trajectories)
             ]
 
+        # Store ℏ and trajectory count on context for evidence block in Stage 11
+        context._epsilon = epsilon
+        context._num_trajectories = len(context.trajectories)
+
         return {
             'trajectories_generated': len(context.trajectories),
             'epsilon': epsilon,
@@ -597,11 +628,22 @@ class PipelineOrchestrator:
             microstate = {
                 'ict_geometry': context.ict_geometry,
                 'market_state': context.market_state,
+                'hft_signals': context.hft_signals,
             }
 
             for traj in context.admissible_paths:
                 # Convert path format
-                path = [{'price': p[1], 'ofi': 0.0, 'timestamp': p[0]} for p in traj['path']]
+                micro = context.market_state.get('microstructure', {})
+                path = [
+                    {
+                        'price': p[1],
+                        'ofi': micro.get('ofi', 0.0),
+                        'timestamp': p[0],
+                        'spread': micro.get('spread', 0.0),
+                        'acceleration': micro.get('acceleration', 0.0),
+                    }
+                    for p in traj['path']
+                ]
 
                 result = action_comp.compute_full_action(path, microstate, weights)
                 context.action_scores[traj['id']] = result
@@ -638,7 +680,7 @@ class PipelineOrchestrator:
         return {'selected_id': best['id'], 'action': best.get('action', 0)}
     
     def _stage_proposal_generation(self, context: PipelineContext) -> Dict:
-        """Stage 11: Extract trade proposal from selected path"""
+        """Stage 11: Extract trade proposal from selected path (curvature-adaptive)."""
         if context.selected_path is None:
             return {'proposal': None}
 
@@ -646,35 +688,163 @@ class PipelineOrchestrator:
         first_price = path[0][1]
         last_price = path[-1][1] if len(path) > 1 else first_price
 
-        # Direction from path slope; fall back to curvature regime
-        if abs(last_price - first_price) > 1e-8:
-            direction = 'buy' if last_price > first_price else 'sell'
+        # Anchor entry to actual market price — trajectory coords are Riemannian,
+        # not directly comparable to broker prices.
+        closes = context.raw_data.get('close', [])
+        entry  = float(closes[-1]) if closes else first_price
+
+        # --- Curvature extraction ---
+        curvature_data = context.geometry_data.get('curvature', {})
+        if isinstance(curvature_data, dict):
+            K = float(
+                curvature_data.get('gaussian_curvature')
+                or curvature_data.get('K')
+                or curvature_data.get('scalar_curvature')
+                or curvature_data.get('curvature_value')
+                or 0.0
+            )
         else:
-            curvature_regime = context.geometry_data.get('regime', 'FLAT')
-            direction = 'buy' if curvature_regime != 'SADDLE' else 'sell'
+            K = 0.0
+        regime = context.geometry_data.get('regime', 'FLAT')
+
+        # --- Direction: regime-gated ---
+        path_moved   = abs(last_price - first_price) > 1e-8
+        path_went_up = (last_price - first_price) > 1e-8
+
+        if not path_moved:
+            direction = 'sell' if regime != 'SADDLE' else 'buy'
+        elif K < -0.05:
+            # Negative curvature (hyperbolic/saddle): breakout regime — follow the path
+            direction = 'buy' if path_went_up else 'sell'
+        else:
+            # Flat / positive curvature: mean-reversion — contrarian to path
+            direction = 'sell' if path_went_up else 'buy'
+
+        # --- Curvature-adaptive stop/target (2:1 R:R always) ---
+        K_abs = abs(K)
+        stop_mult     = min(1.0 + K_abs, 2.0)   # K=0→1.0×, K=0.5→1.5×, cap 2.0×
+        base_stop_pips = 0.0010                   # 10 pip base
+        stop_pips   = base_stop_pips * stop_mult
+        target_pips = stop_pips * 2.0             # 2:1 R:R
 
         if direction == 'buy':
-            stop = first_price - 0.0010
-            target = first_price + 0.0020
+            stop   = entry - stop_pips
+            target = entry + target_pips
         else:
-            stop = first_price + 0.0010
-            target = first_price - 0.0020
+            stop   = entry + stop_pips
+            target = entry - target_pips
+
+        # --- Sailing ladder: FVG-indexed lot sizing ---
+        fvgs = (context.ict_geometry or {}).get('fvgs', [])
+        fvg_index = min(len(fvgs), 3)
+        _SAILING_LADDER = {0: 0.01, 1: 0.01, 2: 0.1, 3: 1.0}
+        proposed_size = _SAILING_LADDER[fvg_index]
 
         context.proposal = {
             'direction': direction,
-            'entry': first_price,
-            'stop': stop,
-            'target': target,
-            'path_id': context.selected_path['id'],
+            'entry':     entry,
+            'stop':      stop,
+            'target':    target,
+            'size':      proposed_size,
+            'path_id':   context.selected_path['id'],
+            'fvg_index': fvg_index,
         }
 
-        return {'proposal': context.proposal}
+        # --- Mandatory evidence block ---
+        path_prices = [step[1] for step in path]
+        path_std    = float(np.std(path_prices)) if len(path_prices) > 1 else 0.0
+        evidence = {
+            'curvature_mean':     K,
+            'curvature_max':      K_abs,
+            'curvature_regime':   regime,
+            'selected_path_action': context.selected_path.get('action', 0.0),
+            'path_entropy':       path_std,
+            'num_paths':          getattr(context, '_num_trajectories', 0),
+            'hbar':               getattr(context, '_epsilon', 0.015),
+            'fvg_index':          fvg_index,
+            'stop_multiplier':    stop_mult,
+        }
+        context.path_integral_evidence = evidence
+
+        return {
+            'proposal': context.proposal,
+            'evidence': evidence,
+        }
     
+    def _validate_path_stepwise(self, path: list, direction: str) -> Tuple[bool, str]:
+        """
+        Π_total: validate every step of a trajectory in Riemannian coordinate space.
+        Refusal-first semantics — any single violation refuses the entire path.
+
+        Gates:
+          1. Non-degenerate: path must have measurable net movement.
+          3. Oscillation: no midpoint retraces more than 80% of path_delta back past start.
+          4. Velocity: no single step exceeds 40% of total movement (no teleporting).
+        Note: direction consistency (Gate 2) is intentionally omitted — regime-gated
+        direction (breakout vs mean-reversion) is handled upstream in proposal generation.
+        """
+        if not path or len(path) < 2:
+            return False, "path_too_short"
+
+        prices = [step[1] for step in path]
+        first, last = prices[0], prices[-1]
+        path_delta = last - first
+
+        # Gate 1: Non-degenerate — net movement must be measurable
+        if abs(path_delta) < 1e-8:
+            return False, "degenerate_path"
+
+        path_went_up = path_delta > 0
+
+        # Gate 3: Oscillation — midpoints must not retrace back past start by > 80% of path_delta.
+        # For upward paths: reject if any midpoint drops more than 80% of path_delta below start.
+        # For downward paths: reject if any midpoint rises more than 80% of |path_delta| above start.
+        if len(prices) > 2:
+            midprices = prices[1:-1]
+            retrace_limit = 0.80
+            if path_went_up:
+                min_mid = min(midprices)
+                threshold = first - retrace_limit * path_delta
+                if min_mid < threshold:
+                    retrace_frac = (first - min_mid) / path_delta
+                    return False, f"excessive_oscillation_{retrace_frac:.0%}_below_start"
+            else:
+                max_mid = max(midprices)
+                threshold = first + retrace_limit * abs(path_delta)
+                if max_mid > threshold:
+                    retrace_frac = (max_mid - first) / abs(path_delta)
+                    return False, f"excessive_oscillation_{retrace_frac:.0%}_above_start"
+
+        # Gate 4: Velocity bound — no single step > 40% of total movement (no teleporting).
+        # Only enforced for paths with enough steps that uniform motion stays well under limit.
+        if len(prices) >= 5:
+            max_step = abs(path_delta) * 0.40
+            for i in range(1, len(prices)):
+                step_size = abs(prices[i] - prices[i - 1])
+                if step_size > max_step:
+                    return False, f"velocity_spike_at_step_{i}: {step_size:.6f}"
+
+        return True, "ok"
+
     def _stage_admissibility_check(self, context: PipelineContext) -> Dict:
         """Stage 12: Final admissibility check — hard risk gates enforced here."""
         proposal = context.proposal
         if not proposal:
             return {'admissible': False, 'risk_ok': False, 'reason': 'no_proposal'}
+
+        # Π_total: path-wise step validation before any risk computation
+        if context.selected_path:
+            path_ok, path_reason = self._validate_path_stepwise(
+                context.selected_path['path'],
+                proposal.get('direction', 'buy'),
+            )
+            if not path_ok:
+                context.risk_check_passed = False
+                return {
+                    'admissible': False,
+                    'risk_ok': False,
+                    'reason': f'pi_total_path_violation: {path_reason}',
+                }
 
         symbol = context.symbol
         direction = proposal.get('direction', 'buy')
@@ -779,6 +949,7 @@ class PipelineOrchestrator:
 
         decision, token = result
         context.collapse_decision = decision.name
+        context.execution_token = token
 
         try:
             from trading.observability.metrics import MetricsCollector
@@ -813,43 +984,61 @@ class PipelineOrchestrator:
             }
             return {'executed': True, 'order': context.execution_result}
 
-        # Live mode: route to broker via SignalRouter
-        try:
-            from trading.brokers.signal_router import SignalRouter, TradingViewSignal
-        except ImportError:
-            logger.error("Stage 16: signal_router not available — falling back to paper")
-            context.execution_result = {
-                'order_id': f'ord_{int(time.time())}',
-                'symbol': context.symbol,
-                'entry_price': context.proposal['entry'],
-                'status': 'filled',
-                'realized_pnl': 0.0,
-            }
-            return {'executed': True, 'order': context.execution_result, 'fallback': True}
+        # Live mode: place market order directly on MT5 (Deriv fallback not yet supported)
+        from trading.brokers.mt5_broker import MT5Broker, MT5Order, mt5_broker as _mt5
+        from trading.brokers.deriv_broker import DerivBroker, DerivOrder, deriv_broker as _deriv
 
-        router = getattr(self, '_router', None)
-        if router is None:
-            self._router = SignalRouter()
-            router = self._router
+        direction = context.proposal.get('direction', 'buy')
+        entry     = context.proposal['entry']
+        size      = context.proposal.get('size', 0.01)
+        stop      = context.proposal.get('stop')
+        target    = context.proposal.get('target')
 
-        signal = TradingViewSignal(
-            symbol=context.symbol,
-            action=context.proposal.get('direction', 'buy'),
-            price=context.proposal['entry'],
-            sl=context.proposal.get('stop'),
-            tp=context.proposal.get('target'),
-            volume=context.proposal.get('size', 0.01),
-        )
-        routed = router.route_signal(signal)
-        if routed is None:
-            logger.warning("Stage 16: signal routing failed for %s — no execution", context.symbol)
-            return {'executed': False, 'reason': 'routing_failed'}
+        result = None
+
+        # --- MT5 ---
+        if _mt5.connected:
+            mt5_order = MT5Order(
+                symbol=context.symbol,
+                order_type=direction,
+                volume=size,
+                sl=stop,
+                tp=target,
+                comment='ApexQuantumICT',
+            )
+            result = _mt5.place_order(mt5_order, token=context.execution_token)
+            if result:
+                logger.info(
+                    "Stage 16: MT5 order placed ticket=%s %s %s size=%.2f",
+                    result.get('ticket'), direction.upper(), context.symbol, size
+                )
+
+        # --- Deriv fallback ---
+        if result is None and _deriv.connected:
+            contract_type = 'CALL' if direction == 'buy' else 'PUT'
+            d_order = DerivOrder(
+                symbol='frx' + context.symbol if not context.symbol.startswith('frx') else context.symbol,
+                contract_type=contract_type,
+                duration=5,
+                duration_unit='m',
+                amount=max(round(size * 100, 2), 1.0),
+            )
+            result = _deriv.place_contract(d_order, token=context.execution_token)
+            if result:
+                logger.info(
+                    "Stage 16: Deriv contract placed %s %s size=%.2f",
+                    contract_type, context.symbol, size
+                )
+
+        if result is None:
+            logger.error("Stage 16: no broker available for live execution — order not placed")
+            return {'executed': False, 'reason': 'no_broker'}
 
         context.execution_result = {
-            'order_id': str(getattr(routed, 'order_id', None) or f'ord_{int(time.time())}'),
-            'symbol': context.symbol,
-            'entry_price': getattr(routed, 'fill_price', None) or context.proposal['entry'],
-            'status': getattr(routed, 'status', 'filled'),
+            'order_id':    str(result.get('ticket') or result.get('contract_id') or f'ord_{int(time.time())}'),
+            'symbol':      context.symbol,
+            'entry_price': float(result.get('price', entry)),
+            'status':      'filled',
             'realized_pnl': 0.0,
         }
         return {'executed': True, 'order': context.execution_result}
@@ -927,8 +1116,15 @@ class PipelineOrchestrator:
         if context.collapse_decision != 'AUTHORIZED':
             return {'updated': False, 'reason': 'not_authorized'}
         
-        # Get PnL (mock for now)
-        pnl = 50.0 if context.reconciliation_status == 'match' else -20.0
+        # Stage 18 learns entry quality (L/T/E/R operator weights), not realized PnL.
+        # Realized PnL flows asynchronously via MT5PositionCloseTracker -> PPO only.
+        _RECONCILIATION_REWARD = {
+            'match':         10.0,
+            'mismatch':      -5.0,
+            'rollback':     -20.0,
+            'no_execution':   0.0,
+        }
+        pnl = _RECONCILIATION_REWARD.get(context.reconciliation_status, 0.0)
         
         # Get contributions from selected path
         if context.selected_path:
