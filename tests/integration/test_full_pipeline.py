@@ -165,6 +165,7 @@ class TestAgentsToSchedulerPipeline:
         
         assert collapse_decision in [CollapseDecision.AUTHORIZED, CollapseDecision.REFUSED]
         assert decision.selected_trajectory < len(trajectories)
+        scheduler.release_execution_token(token)
         
         print(f"✅ Agents→Scheduler: {len(votes)} votes, decision={collapse_decision.value}")
 
@@ -309,6 +310,7 @@ class TestFullSystemIntegration:
         )
         
         assert collapse_decision in [CollapseDecision.AUTHORIZED, CollapseDecision.REFUSED]
+        scheduler.release_execution_token(token)
         
         print(f"✅ Full Pipeline: {len(votes)} agents, RL={use_rl}, Decision={collapse_decision.value}")
         print(f"   Selected trajectory: {agent_decision.selected_trajectory}")
