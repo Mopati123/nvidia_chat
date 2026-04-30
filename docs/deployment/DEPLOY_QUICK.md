@@ -49,9 +49,9 @@ heroku ps:scale worker=1
 | Command | Description |
 |---------|-------------|
 | `/start` | Welcome menu |
-| `/market EURUSD` | ICT analysis with 18 operators |
+| `/market EURUSD` | ICT + order-book analysis with 25 operators |
 | `/shadow EURUSD bullish` | Shadow trade (simulation) |
-| `/operators` | List all 18 operators |
+| `/operators` | List all 25 operators |
 | `/trading` | System status |
 | `/mode [shadow/demo/live]` | Set trading mode |
 | `/connect mt5` / `/connect deriv` | Connect broker |

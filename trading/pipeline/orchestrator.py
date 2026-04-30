@@ -83,6 +83,8 @@ class PipelineContext:
     # Stage outputs (checkpointed)
     raw_data: Dict = field(default_factory=dict)
     market_state: Dict = field(default_factory=dict)
+    order_book: Optional[Any] = None
+    hft_signals: Dict = field(default_factory=dict)
     ict_geometry: Dict = field(default_factory=dict)
     geometry_data: Dict = field(default_factory=dict)  # Riemannian geometry
     trajectories: List[Dict] = field(default_factory=list)
@@ -91,6 +93,7 @@ class PipelineContext:
     selected_path: Optional[Dict] = None
     proposal: Dict = field(default_factory=dict)
     collapse_decision: Optional[str] = None
+    execution_token: Optional[Any] = None
     execution_result: Dict = field(default_factory=dict)
     reconciliation_status: str = ""
     evidence_hash: str = ""
@@ -354,11 +357,35 @@ class PipelineOrchestrator:
             
             if micro:
                 context.market_state['microstructure'] = micro
+
+        order_book_result = self._stage_order_book_analysis(context)
         
         context.market_state['ohlcv'] = context.raw_data.get('ohlcv', [])
         context.market_state['symbol'] = context.symbol
         
-        return {'state_built': True}
+        return {'state_built': True, **order_book_result}
+
+    def _stage_order_book_analysis(self, context: PipelineContext) -> Dict:
+        """Stage 2.5: Optional analytics-only order-book depth analysis."""
+        raw_book = context.raw_data.get('order_book')
+        if not raw_book:
+            return {'order_book_analyzed': False}
+
+        from ..microstructure import OrderBookEngine
+
+        engine = OrderBookEngine(context.symbol)
+        signals = engine.process_snapshot(raw_book)
+        context.order_book = engine.current_book
+        context.hft_signals = signals.to_dict()
+        context.market_state['order_book'] = (
+            context.order_book.to_dict() if context.order_book is not None else {}
+        )
+        context.market_state['hft_signals'] = dict(context.hft_signals)
+
+        return {
+            'order_book_analyzed': True,
+            'hft_signals': dict(context.hft_signals),
+        }
     
     def _stage_ict_extraction(self, context: PipelineContext) -> Dict:
         """Stage 3: Extract ICT geometry + detect market regime.
@@ -601,11 +628,22 @@ class PipelineOrchestrator:
             microstate = {
                 'ict_geometry': context.ict_geometry,
                 'market_state': context.market_state,
+                'hft_signals': context.hft_signals,
             }
 
             for traj in context.admissible_paths:
                 # Convert path format
-                path = [{'price': p[1], 'ofi': 0.0, 'timestamp': p[0]} for p in traj['path']]
+                micro = context.market_state.get('microstructure', {})
+                path = [
+                    {
+                        'price': p[1],
+                        'ofi': micro.get('ofi', 0.0),
+                        'timestamp': p[0],
+                        'spread': micro.get('spread', 0.0),
+                        'acceleration': micro.get('acceleration', 0.0),
+                    }
+                    for p in traj['path']
+                ]
 
                 result = action_comp.compute_full_action(path, microstate, weights)
                 context.action_scores[traj['id']] = result
@@ -911,6 +949,7 @@ class PipelineOrchestrator:
 
         decision, token = result
         context.collapse_decision = decision.name
+        context.execution_token = token
 
         try:
             from trading.observability.metrics import MetricsCollector
@@ -967,7 +1006,7 @@ class PipelineOrchestrator:
                 tp=target,
                 comment='ApexQuantumICT',
             )
-            result = _mt5.place_order(mt5_order)
+            result = _mt5.place_order(mt5_order, token=context.execution_token)
             if result:
                 logger.info(
                     "Stage 16: MT5 order placed ticket=%s %s %s size=%.2f",
@@ -984,7 +1023,7 @@ class PipelineOrchestrator:
                 duration_unit='m',
                 amount=max(round(size * 100, 2), 1.0),
             )
-            result = _deriv.place_contract(d_order)
+            result = _deriv.place_contract(d_order, token=context.execution_token)
             if result:
                 logger.info(
                     "Stage 16: Deriv contract placed %s %s size=%.2f",

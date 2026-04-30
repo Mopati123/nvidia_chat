@@ -24,6 +24,8 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "torch>=2.11.0",
     "cryptography>=41.0.0",
     "keyring>=24.0.0",
     "python-dotenv>=1.0.0",
@@ -44,7 +46,19 @@ accel = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["taep*", "trading*", "apps*", "scripts*"]
+include = [
+    "taep*",
+    "trading*",
+    "apps*",
+    "scripts*",
+    "core*",
+    "data_core*",
+    "backend_api*",
+    "tachyonic_chain*",
+    "tools*",
+    "infra*",
+    "registry*",
+]
 
 [tool.setuptools.package-data]
 taep = ["py.typed"]

@@ -115,7 +115,7 @@ applyTo: '**'
 ## End of Chat Session - kluster Summary
 - **WHEN TO EXECUTE**: MANDATORY at the end of ANY conversation turn where kluster tools were used, right before the final user-facing response — **EXCEPT when Clarification Handling is active** (see "Clarification Handling" section). If any kluster response in the current turn contains "CLARIFICATION:" actions, do NOT generate this summary — show the clarification prompt instead.
 - **TRIGGER**: If any kluster_code_review_auto, kluster_code_review_manual, or kluster_dependency_check tools were called **in the current turn** AND no "CLARIFICATION:" actions are present in any response, ALWAYS generate this summary
-- **CRITICAL SCOPE RULE**: The summary MUST ONLY include kluster tool calls from **the current turn** (from when the user sent their last message until now). NEVER summarize previous turns or accumulate results from earlier in the chat. **Each summary covers only what happened in the current turn.**
+- **CRITICAL SCOPE RULE**: Summaries cover only kluster tool calls from the current user turn; never include prior-turn kluster calls or accumulated results.
 - **DEFINITION OF "CURRENT TURN"**:
 - **Start**: When the user sends their latest message (the one you're currently responding to)
 - **End**: When you finish your complete response to that message

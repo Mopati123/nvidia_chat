@@ -115,9 +115,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • /image <prompt> - Generate image (if supported)
 
 **⚛️ ApexQuantumICT Trading Commands (6-Input Integration):**
-• /market <symbol> [bias] - ICT analysis via 18-operator registry
+• /market <symbol> [bias] - ICT + order-book analysis via 25-operator registry
 • /shadow <symbol> <bias> - Shadow trade execution (no capital)
-• /operators - List all 18 ICT operators (FVG, OB, LP, OTE, etc.)
+• /operators - List all 25 operators (18 ICT + 7 order-book analytics)
 • /constraints - Check constraint Hamiltonian status
 • /trading - Shadow system status (𝔖 = (X, g, Φ, Π, ℳ, Λ, ℛ, ℰ))
 
@@ -325,11 +325,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= APEXQUANTUMICT TRADING COMMANDS =================
 # Integrated from 6 inputs: Architecture, System Tuple, Transition Cycle,
-# 18-Operator Registry, Production Codebase, End-to-End Data Flow
+# 25-Operator Registry, Production Codebase, End-to-End Data Flow
 
 async def market_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /market <symbol> - Run ICT analysis using 18-operator registry
+    /market <symbol> - Run ICT + order-book analysis using 25-operator registry
     Canonical transition cycle: Proposal → Projection → ΔS → Evidence
     """
     if not TRADING_AVAILABLE or not trading_system:
@@ -371,7 +371,7 @@ async def market_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Bias:** {bias}
 **System Tuple:** 𝔖 = (X, g, Φ, Π, ℳ, Λ, ℛ, ℰ)
 
-**Operator Scores (18-operator registry):**
+**Operator Scores (25-operator registry):**
 {op_lines}
 
 **Setup Quality:**
@@ -455,7 +455,7 @@ async def shadow_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def list_operators(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List all 18 ICT operators from registry"""
+    """List all 25 operators from registry"""
     if not TRADING_AVAILABLE:
         await update.message.reply_text("⚠️ Trading system unavailable")
         return
@@ -477,7 +477,7 @@ async def list_operators(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 measurements.append(f"  {m['id']:02d}. `{name}` — {m['equation']}")
         
-        report = f"""⚛️ **ApexQuantumICT 18-Operator Registry**
+        report = f"""⚛️ **ApexQuantumICT 25-Operator Registry**
 
 **Potential Operators (V → Hamiltonian):**
 {chr(10).join(potentials[:7])}

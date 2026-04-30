@@ -5,7 +5,7 @@ Tests all components including:
 - NVIDIA API integration
 - Telegram bot handlers
 - ApexQuantumICT trading system
-- 18-operator registry
+- 25-operator registry (18 legacy ICT + 7 order-book analytics)
 - Path integral trajectory generation
 - Shadow trading loop
 - Evidence chain
@@ -65,13 +65,14 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-# Test 4: 18-Operator Registry
-print("\n[TEST 4] 18-Operator ICT/SMC Registry...")
+# Test 4: 25-Operator Registry
+print("\n[TEST 4] 25-Operator ICT/SMC + Order-Book Registry...")
 try:
     from trading.operators.operator_registry import OperatorRegistry, OperatorType
 
     registry = OperatorRegistry()
-    assert len(registry.operators) == 18, f"Expected 18 operators, got {len(registry.operators)}"
+    assert len(registry.operators) == 25, f"Expected 25 operators, got {len(registry.operators)}"
+    assert len(registry._legacy_operator_names) == 18, "Legacy O1-O18 operator slice changed"
 
     # Check all operators loaded
     op_names = list(registry.operators.keys())
@@ -85,7 +86,7 @@ try:
     for op in required_ops:
         assert op in op_names, f"Missing operator: {op}"
 
-    print(f"  ✓ All 18 operators loaded: {op_names[:5]}...")
+    print(f"  ✓ All 25 operators loaded: {op_names[:5]}...")
     print(f"  ✓ Operator META dicts validated")
     print(f"  ✓ Types: Potential={sum(1 for o in registry.operators.values() if o.meta.type == OperatorType.POTENTIAL)}, " +
           f"Projector={sum(1 for o in registry.operators.values() if o.meta.type == OperatorType.PROJECTOR)}, " +
@@ -281,7 +282,7 @@ print("\nSystem Components:")
 print("  ✓ NVIDIA API Integration (Falcon 3, Nemotron 70B, Qwen)")
 print("  ✓ Telegram Bot Framework")
 print("  ✓ ApexQuantumICT Trading Kernel")
-print("  ✓ 18-Operator ICT/SMC Registry")
+print("  ✓ 25-Operator ICT/SMC + Order-Book Registry")
 print("  ✓ Feynman Path Integral Engine")
 print("  ✓ Minkowski Market Bridge (4-object theorem)")
 print("  ✓ Shadow Trading Loop (7-step canonical cycle)")

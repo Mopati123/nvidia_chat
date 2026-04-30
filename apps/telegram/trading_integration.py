@@ -90,7 +90,7 @@ class TradingBotSuperposition:
         if not args:
             await update.message.reply_text(
                 "Usage: `/market EURUSD [bullish|bearish]`\n"
-                "Runs 18-operator ICT analysis via quantum-inspired system."
+                "Runs 25-operator ICT + order-book analysis via quantum-inspired system."
             )
             return
         
@@ -184,7 +184,7 @@ class TradingBotSuperposition:
             projectors = [f"{m['id']:02d}. `{n}` — {m['equation']}" 
                          for n, m in meta.items() if m['type'] == 'projector'][:5]
             
-            report = f"""⚛️ **18-Operator ICT Registry**
+            report = f"""⚛️ **25-Operator ICT + Order-Book Registry**
 
 **Potential Operators (V → H):**
 {chr(10).join(potentials)}
@@ -298,7 +298,7 @@ class TradingBotSuperposition:
         """Get trading commands help for /start message"""
         return """
 **⚛️ ApexQuantumICT Trading Commands:**
-• `/market <symbol> [bias]` — ICT analysis (18 operators)
+• `/market <symbol> [bias]` — ICT + order-book analysis (25 operators)
 • `/shadow <symbol> <bias>` — Shadow trade execution
 • `/operators` — List 18 ICT/SMC operators
 • `/constraints` — Check constraint Hamiltonian

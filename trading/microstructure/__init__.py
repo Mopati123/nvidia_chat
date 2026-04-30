@@ -8,6 +8,7 @@ path generation and action evaluation in the quantum trading system.
 from .tick_processor import TickProcessor, OFICalculator
 from .flow_field import LiquidityPotentialField, FlowField
 from .microstate import MicroState, MicroStructure
+from .order_book import OrderBookEngine, OrderBookLevel, OrderBookSignals, OrderBookSnapshot
 
 __all__ = [
     'TickProcessor',
@@ -16,4 +17,8 @@ __all__ = [
     'FlowField',
     'MicroState',
     'MicroStructure',
+    'OrderBookEngine',
+    'OrderBookLevel',
+    'OrderBookSignals',
+    'OrderBookSnapshot',
 ]

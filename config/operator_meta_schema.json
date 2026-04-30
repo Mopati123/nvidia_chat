@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rootfile Operator Metadata",
+  "type": "object",
+  "required": ["tier", "layer", "operator_type"],
+  "properties": {
+    "tier": {
+      "type": "string"
+    },
+    "layer": {
+      "type": "string"
+    },
+    "operator_type": {
+      "type": "string"
+    },
+    "authority": {
+      "type": "string"
+    },
+    "executes": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": true
+}
+

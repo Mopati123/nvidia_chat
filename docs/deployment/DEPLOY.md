@@ -82,7 +82,7 @@ Full control over the environment.
 Test these commands in Telegram:
 - `/start` - Should show welcome with trading commands
 - `/market EURUSD` - Should run ICT analysis
-- `/operators` - Should list 18 operators
+- `/operators` - Should list 25 operators
 - `/trading` - Should show system status
 
 ## Monitoring
@@ -113,7 +113,7 @@ User → Telegram → Bot Server → NVIDIA AI / Trading System
                             ↓
                     Shadow Trading Loop
                             ↓
-          18 Operators → Path Integral → Evidence Chain
+          25 Operators → Path Integral → Evidence Chain
 ```
 
 ## Support

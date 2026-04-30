@@ -1,5 +1,5 @@
 """
-operator_registry.py — 18-operator registry (1:1 with equations)
+operator_registry.py — 25-operator registry.
 
 Each operator declares:
 - META dict (validated against schema)
@@ -12,6 +12,7 @@ ICT/SMC Trading Concepts as Quantum Operators:
 01-07: Potential operators (contribute to Hamiltonian)
 08-17: Projector/constraint operators (Π)
 18: Measurement operator (ℳ)
+19-25: Order-book microstructure analytics operators
 """
 
 import numpy as np
@@ -93,16 +94,17 @@ class ICTOperator:
 
 class OperatorRegistry:
     """
-    18-operator registry for ICT/SMC trading analysis.
+    25-operator registry for ICT/SMC and order-book trading analysis.
     Maps ICT concepts to quantum operators.
     """
     
     def __init__(self):
         self.operators: Dict[str, ICTOperator] = {}
+        self._legacy_operator_names: tuple[str, ...] = ()
         self._initialize_operators()
         
     def _initialize_operators(self):
-        """Initialize all 18 operators with META declarations"""
+        """Initialize legacy operators and optional order-book analytics operators."""
         
         # 01: Kinetic - T(p;σ) - Momentum/velocity
         op01 = ICTOperator(OperatorMeta(
@@ -373,6 +375,114 @@ class OperatorRegistry:
         ))
         op18.bind_compute(self._compute_projection)
         self.operators["projection"] = op18
+
+        # Preserve the original O1-O18 accelerated and projection contract.
+        self._legacy_operator_names = tuple(self.operators.keys())
+
+        # 19: Depth Imbalance - Π_depth - Bid/ask depth asymmetry
+        op19 = ICTOperator(OperatorMeta(
+            id=19,
+            name="depth_imbalance",
+            equation="Π_depth",
+            type=OperatorType.POTENTIAL,
+            domain="order_book_depth",
+            codomain="[-1,1]",
+            invariants=["bounded", "depth_weighted"],
+            interfaces={"input": "hft_signals", "output": "depth_pressure"},
+            quantum_semantics={"observable": True, "analytics_only": True}
+        ))
+        op19.bind_compute(self._compute_depth_imbalance)
+        self.operators["depth_imbalance"] = op19
+
+        # 20: Volume Layering - Π_layer - Uniform depth layering detector
+        op20 = ICTOperator(OperatorMeta(
+            id=20,
+            name="volume_layering",
+            equation="Π_layer",
+            type=OperatorType.PROJECTOR,
+            domain="order_book_depth",
+            codomain="[-1,1]",
+            invariants=["bounded", "non_executing"],
+            interfaces={"input": "hft_signals", "output": "layering_risk"},
+            quantum_semantics={"observable": True, "analytics_only": True}
+        ))
+        op20.bind_compute(self._compute_volume_layering)
+        self.operators["volume_layering"] = op20
+
+        # 21: Enhanced Microprice - M_micro - Depth-weighted fair price
+        op21 = ICTOperator(OperatorMeta(
+            id=21,
+            name="enhanced_microprice",
+            equation="M_micro",
+            type=OperatorType.MEASUREMENT,
+            domain="order_book_depth",
+            codomain="price",
+            invariants=["volume_weighted", "non_executing"],
+            interfaces={"input": "hft_signals", "output": "microprice"},
+            quantum_semantics={"observable": True, "analytics_only": True}
+        ))
+        op21.bind_compute(self._compute_enhanced_microprice_signal)
+        self.operators["enhanced_microprice"] = op21
+
+        # 22: Bid/Ask Pressure - V_pressure - Pressure continuation ratio
+        op22 = ICTOperator(OperatorMeta(
+            id=22,
+            name="bid_ask_pressure",
+            equation="V_pressure",
+            type=OperatorType.POTENTIAL,
+            domain="order_book_depth",
+            codomain="positive_ratio",
+            invariants=["positive", "depth_weighted"],
+            interfaces={"input": "hft_signals", "output": "pressure_ratio"},
+            quantum_semantics={"observable": True, "analytics_only": True}
+        ))
+        op22.bind_compute(self._compute_bid_ask_pressure)
+        self.operators["bid_ask_pressure"] = op22
+
+        # 23: Iceberg Detection - Π_ice - Refill probability
+        op23 = ICTOperator(OperatorMeta(
+            id=23,
+            name="iceberg_detection",
+            equation="Π_ice",
+            type=OperatorType.PROJECTOR,
+            domain="order_book_history",
+            codomain="[0,1]",
+            invariants=["bounded", "history_dependent"],
+            interfaces={"input": "hft_signals", "output": "iceberg_probability"},
+            quantum_semantics={"observable": True, "analytics_only": True}
+        ))
+        op23.bind_compute(self._compute_iceberg_detection)
+        self.operators["iceberg_detection"] = op23
+
+        # 24: Cumulative Delta Pressure - δP_cumul - Time-integrated depth flow
+        op24 = ICTOperator(OperatorMeta(
+            id=24,
+            name="cumulative_delta_pressure",
+            equation="δP_cumul",
+            type=OperatorType.POTENTIAL,
+            domain="order_book_history",
+            codomain="signed_volume",
+            invariants=["path_dependent", "non_executing"],
+            interfaces={"input": "hft_signals", "output": "cumulative_delta"},
+            quantum_semantics={"observable": True, "analytics_only": True}
+        ))
+        op24.bind_compute(self._compute_cumulative_delta_pressure)
+        self.operators["cumulative_delta_pressure"] = op24
+
+        # 25: Book Inversion - Π_invert - Circuit-breaker observable
+        op25 = ICTOperator(OperatorMeta(
+            id=25,
+            name="book_inversion",
+            equation="Π_invert",
+            type=OperatorType.PROJECTOR,
+            domain="order_book_top",
+            codomain="{0,0.5,1}",
+            invariants=["circuit_breaker", "non_executing"],
+            interfaces={"input": "hft_signals", "output": "inversion_alert"},
+            quantum_semantics={"observable": True, "analytics_only": True}
+        ))
+        op25.bind_compute(self._compute_book_inversion)
+        self.operators["book_inversion"] = op25
     
     # ============== HELPER METHODS ==============
 
@@ -820,6 +930,41 @@ class OperatorRegistry:
             return 0.8  # Distribution (still positive for energy contribution)
         return 0.3
 
+    def _hft_signal(self, market_data: Dict, state: Dict, key: str, default: float = 0.0) -> float:
+        signals = state.get("hft_signals") or market_data.get("hft_signals") or {}
+        try:
+            return float(signals.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _compute_depth_imbalance(self, market_data: Dict, state: Dict) -> float:
+        """O19 Π_depth: bid/ask depth imbalance."""
+        return float(np.clip(self._hft_signal(market_data, state, "depth_imbalance"), -1.0, 1.0))
+
+    def _compute_volume_layering(self, market_data: Dict, state: Dict) -> float:
+        """O20 Π_layer: uniform resting-size layering score."""
+        return float(np.clip(self._hft_signal(market_data, state, "layering_score"), -1.0, 1.0))
+
+    def _compute_enhanced_microprice_signal(self, market_data: Dict, state: Dict) -> float:
+        """O21 M_micro: depth-weighted microprice."""
+        return self._hft_signal(market_data, state, "enhanced_microprice")
+
+    def _compute_bid_ask_pressure(self, market_data: Dict, state: Dict) -> float:
+        """O22 V_pressure: bid/ask pressure ratio."""
+        return max(0.0, self._hft_signal(market_data, state, "pressure_ratio", 1.0))
+
+    def _compute_iceberg_detection(self, market_data: Dict, state: Dict) -> float:
+        """O23 Π_ice: bounded iceberg refill probability."""
+        return float(np.clip(self._hft_signal(market_data, state, "iceberg_probability"), 0.0, 1.0))
+
+    def _compute_cumulative_delta_pressure(self, market_data: Dict, state: Dict) -> float:
+        """O24 δP_cumul: cumulative signed depth change."""
+        return self._hft_signal(market_data, state, "cumulative_delta")
+
+    def _compute_book_inversion(self, market_data: Dict, state: Dict) -> float:
+        """O25 Π_invert: crossed-book circuit-breaker observable."""
+        return float(np.clip(self._hft_signal(market_data, state, "book_inversion"), 0.0, 1.0))
+
     def _compute_projection(self, market_data: Dict, state: Dict) -> float:
         """O18 = <psi|H_market|psi>: Quantum expectation value of market Hamiltonian.
 
@@ -828,7 +973,8 @@ class OperatorRegistry:
         as eigenvalues). This is the true quantum measurement, not a simple average.
         """
         scores = []
-        for name, op in self.operators.items():
+        for name in self._legacy_operator_names or tuple(self.operators.keys()):
+            op = self.operators[name]
             if name != "projection":
                 scores.append(op.apply(market_data, state))
 
@@ -848,10 +994,14 @@ class OperatorRegistry:
     
     # ============== UTILITY METHODS ==============
     
+    def _has_hft_features(self, market_data: Dict, state: Dict) -> bool:
+        """Return True when order-book analytics are present."""
+        return bool(state.get("hft_signals") or market_data.get("hft_signals"))
+
     def get_hamiltonian(self, market_data: Dict, state: Dict) -> Dict[str, float]:
         """Compute full market Hamiltonian H_market = Σ α_k O_k"""
         # Check if we can use accelerated backend
-        if ACCELERATED and 'prices' in market_data:
+        if ACCELERATED and 'prices' in market_data and not self._has_hft_features(market_data, state):
             try:
                 backend = get_backend()
                 prices = np.array(market_data.get('prices', []))
@@ -886,7 +1036,7 @@ class OperatorRegistry:
         return contributions
     
     def get_all_scores(self, market_data: Dict, state: Dict) -> Dict[str, float]:
-        """Get scores from all 18 operators"""
+        """Get scores from all registered operators."""
         # Try accelerated path first
         if ACCELERATED and 'prices' in market_data:
             try:
@@ -903,11 +1053,16 @@ class OperatorRegistry:
                         prices, highs, lows, opens, closes, volumes
                     )
                     
-                    if scores_array is not None and len(scores_array) == 18:
-                        return {
+                    legacy_names = self._legacy_operator_names or tuple(self.operators.keys())[:18]
+                    if scores_array is not None and len(scores_array) >= len(legacy_names):
+                        scores = {
                             name: float(scores_array[i])
-                            for i, name in enumerate(self.operators.keys())
+                            for i, name in enumerate(legacy_names)
                         }
+                        for name, op in self.operators.items():
+                            if name not in scores:
+                                scores[name] = op.apply(market_data, state)
+                        return scores
             except Exception:
                 pass
         

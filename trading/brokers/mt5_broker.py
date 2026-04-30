@@ -10,9 +10,12 @@ import time
 import threading
 import MetaTrader5 as mt5
 import logging
-from typing import Dict, Optional, List, Tuple, Callable
+from typing import Any, Dict, Optional, List, Tuple, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+
+from core.authority.token_validator import validate_token
+from tachyonic_chain.audit_log import append_execution_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -239,12 +242,30 @@ class MT5Broker:
             logger.error(f"MT5 OHLCV fetch failed: {e}")
             return []
     
-    def place_order(self, order: MT5Order) -> Optional[Dict]:
+    def place_order(self, order: MT5Order, *, token: Optional[Any] = None) -> Optional[Dict]:
         """
         Place market order via MT5
         
         Returns order result or None if failed
         """
+        validation = validate_token(token, operation="live_execution")
+        if not validation.valid:
+            logger.warning("MT5 order blocked by token validator: %s", validation.reason)
+            append_execution_evidence(
+                event_type="broker_refusal",
+                execution_id=f"mt5_refused_{order.symbol}_{int(time.time())}",
+                operation="live_execution",
+                symbol=order.symbol,
+                outcome="refused",
+                token_status=validation.reason,
+                payload={
+                    "broker": "mt5",
+                    "order_type": order.order_type,
+                    "volume": order.volume,
+                },
+            )
+            return None
+
         # Accept if this instance connected, or any live MT5 session is active in this process
         if not self.connected and mt5.account_info() is None:
             logger.error("MT5 not connected")
@@ -276,6 +297,20 @@ class MT5Broker:
             symbol_info = mt5.symbol_info(order.symbol)
             if symbol_info is None:
                 logger.error(f"Symbol {order.symbol} not found")
+                append_execution_evidence(
+                    event_type="broker_execution",
+                    execution_id=f"mt5_failed_{order.symbol}_{int(time.time())}",
+                    operation="live_execution",
+                    symbol=order.symbol,
+                    outcome="failed",
+                    token_status="authorized",
+                    payload={
+                        "broker": "mt5",
+                        "reason": "symbol_not_found",
+                        "order_type": order.order_type,
+                        "volume": order.volume,
+                    },
+                )
                 return None
             
             if not symbol_info.visible:
@@ -365,12 +400,26 @@ class MT5Broker:
                         "MT5 order failed: retcode=%d symbol=%s volume=%.2f",
                         result.retcode, order.symbol, order.volume
                     )
+                append_execution_evidence(
+                    event_type="broker_execution",
+                    execution_id=f"mt5_failed_{order.symbol}_{int(time.time())}",
+                    operation="live_execution",
+                    symbol=order.symbol,
+                    outcome="failed",
+                    token_status="authorized",
+                    payload={
+                        "broker": "mt5",
+                        "retcode": result.retcode,
+                        "order_type": order.order_type,
+                        "volume": order.volume,
+                    },
+                )
                 return None
             
             logger.info(f"Order executed: {order.symbol} {order.order_type} "
                        f"{order.volume} lots @ {result.price}")
             
-            return {
+            execution_result = {
                 'ticket': result.order,
                 'symbol': order.symbol,
                 'volume': order.volume,
@@ -380,6 +429,16 @@ class MT5Broker:
                 'comment': order.comment,
                 'retcode': result.retcode
             }
+            append_execution_evidence(
+                event_type="broker_execution",
+                execution_id=f"mt5_{execution_result['ticket']}",
+                operation="live_execution",
+                symbol=order.symbol,
+                outcome="success",
+                token_status="authorized",
+                payload={"broker": "mt5", **execution_result},
+            )
+            return execution_result
             
         except Exception as e:
             logger.error(f"Order placement failed: {e}")
@@ -410,8 +469,21 @@ class MT5Broker:
         
         return result
     
-    def close_position(self, ticket: int) -> bool:
+    def close_position(self, ticket: int, *, token: Optional[Any] = None) -> bool:
         """Close position by ticket number"""
+        validation = validate_token(token, operation="live_execution")
+        if not validation.valid:
+            logger.warning("MT5 close blocked by token validator: %s", validation.reason)
+            append_execution_evidence(
+                event_type="broker_refusal",
+                execution_id=f"mt5_close_refused_{ticket}_{int(time.time())}",
+                operation="live_execution",
+                outcome="refused",
+                token_status=validation.reason,
+                payload={"broker": "mt5", "ticket": ticket},
+            )
+            return False
+
         if not self.connected:
             return False
         
@@ -440,7 +512,17 @@ class MT5Broker:
             }
 
             result = mt5.order_send(request)
-            return result.retcode == mt5.TRADE_RETCODE_DONE
+            success = result.retcode == mt5.TRADE_RETCODE_DONE
+            append_execution_evidence(
+                event_type="broker_execution",
+                execution_id=f"mt5_close_{ticket}_{int(time.time())}",
+                operation="live_execution",
+                symbol=pos.symbol,
+                outcome="success" if success else "failed",
+                token_status="authorized",
+                payload={"broker": "mt5", "ticket": ticket, "retcode": result.retcode},
+            )
+            return success
             
         except Exception as e:
             logger.error(f"Close position failed: {e}")

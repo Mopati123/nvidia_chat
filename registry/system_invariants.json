@@ -1,0 +1,11 @@
+{
+  "invariants": [
+    "Existing trading.*, taep.*, and apps.* imports remain valid during overlay migration.",
+    "Schedulers are the only components allowed to mint execution authority.",
+    "Simulation and strategy modules generate proposals but do not execute trades.",
+    "Shadow and live execution boundaries validate execution tokens.",
+    "Accepted and refused executions must be auditable through evidence hashes or bundles.",
+    "Broker adapters must not be called by proposal-generation modules."
+  ]
+}
+

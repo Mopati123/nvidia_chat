@@ -191,7 +191,7 @@ class TradingEnvironment:
             energies.append(0.0)
             actions.append(0.0)
         
-        # Extract operator scores (18 operators)
+        # Extract legacy O1-O18 operator scores
         default_ops = {
             'kinetic': 0.5, 'potential': 0.5, 'liquidity': 0.5, 'ob': 0.5,
             'fvg': 0.5, 'breaker': 0.5, 'orderblock': 0.5, 'mitigation': 0.5,

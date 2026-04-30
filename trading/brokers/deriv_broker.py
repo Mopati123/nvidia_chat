@@ -11,10 +11,13 @@ import logging
 import os
 import websocket
 import threading
-from typing import Dict, Optional, List, Callable
+from typing import Any, Dict, Optional, List, Callable
 from dataclasses import dataclass
 from datetime import datetime
 import time
+
+from core.authority.token_validator import validate_token
+from tachyonic_chain.audit_log import append_execution_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -266,12 +269,30 @@ class DerivBroker:
         
         return None
     
-    def place_contract(self, order: DerivOrder) -> Optional[Dict]:
+    def place_contract(self, order: DerivOrder, *, token: Optional[Any] = None) -> Optional[Dict]:
         """
         Place a contract (trade)
         
         Note: Deriv uses 'contracts' not traditional orders
         """
+        validation = validate_token(token, operation="live_execution")
+        if not validation.valid:
+            logger.warning("Deriv contract blocked by token validator: %s", validation.reason)
+            append_execution_evidence(
+                event_type="broker_refusal",
+                execution_id=f"deriv_refused_{order.symbol}_{int(time.time())}",
+                operation="live_execution",
+                symbol=order.symbol,
+                outcome="refused",
+                token_status=validation.reason,
+                payload={
+                    "broker": "deriv",
+                    "contract_type": order.contract_type,
+                    "amount": order.amount,
+                },
+            )
+            return None
+
         if not self.authorized:
             logger.error("Not authorized")
             return None
@@ -301,6 +322,20 @@ class DerivBroker:
                 response = self._send_request(proposal)
             if not response or 'proposal' not in response:
                 logger.error(f"Proposal failed after size reduction: {response}")
+                append_execution_evidence(
+                    event_type="broker_execution",
+                    execution_id=f"deriv_failed_{order.symbol}_{int(time.time())}",
+                    operation="live_execution",
+                    symbol=order.symbol,
+                    outcome="failed",
+                    token_status="authorized",
+                    payload={
+                        "broker": "deriv",
+                        "reason": "proposal_failed",
+                        "contract_type": order.contract_type,
+                        "amount": order.amount,
+                    },
+                )
                 return None
         
         # Buy the contract
@@ -315,15 +350,39 @@ class DerivBroker:
             contract = buy_response['buy']
             logger.info(f"Contract bought: {order.symbol} {order.contract_type} "
                        f"${order.amount} for {order.duration}{order.duration_unit}")
-            
-            return {
+
+            execution_result = {
                 'contract_id': contract['contract_id'],
                 'longcode': contract['longcode'],
                 'transaction_id': contract['transaction_id'],
                 'buy_price': contract['buy_price']
             }
+            append_execution_evidence(
+                event_type="broker_execution",
+                execution_id=f"deriv_{execution_result['contract_id']}",
+                operation="live_execution",
+                symbol=order.symbol,
+                outcome="success",
+                token_status="authorized",
+                payload={"broker": "deriv", **execution_result},
+            )
+            return execution_result
         
         logger.error(f"Buy failed: {buy_response}")
+        append_execution_evidence(
+            event_type="broker_execution",
+            execution_id=f"deriv_failed_{order.symbol}_{int(time.time())}",
+            operation="live_execution",
+            symbol=order.symbol,
+            outcome="failed",
+            token_status="authorized",
+            payload={
+                "broker": "deriv",
+                "reason": "buy_failed",
+                "contract_type": order.contract_type,
+                "amount": order.amount,
+            },
+        )
         return None
     
     def get_active_contracts(self) -> List[Dict]:
@@ -340,8 +399,21 @@ class DerivBroker:
         
         return []
     
-    def sell_contract(self, contract_id: int, price: float) -> Optional[Dict]:
+    def sell_contract(self, contract_id: int, price: float, *, token: Optional[Any] = None) -> Optional[Dict]:
         """Sell/close a contract early"""
+        validation = validate_token(token, operation="live_execution")
+        if not validation.valid:
+            logger.warning("Deriv sell blocked by token validator: %s", validation.reason)
+            append_execution_evidence(
+                event_type="broker_refusal",
+                execution_id=f"deriv_sell_refused_{contract_id}_{int(time.time())}",
+                operation="live_execution",
+                outcome="refused",
+                token_status=validation.reason,
+                payload={"broker": "deriv", "contract_id": contract_id},
+            )
+            return None
+
         if not self.authorized:
             return None
         
@@ -351,6 +423,14 @@ class DerivBroker:
         })
         
         if response and 'sell' in response:
+            append_execution_evidence(
+                event_type="broker_execution",
+                execution_id=f"deriv_sell_{contract_id}_{int(time.time())}",
+                operation="live_execution",
+                outcome="success",
+                token_status="authorized",
+                payload={"broker": "deriv", "contract_id": contract_id, "price": price},
+            )
             return response['sell']
         
         return None
