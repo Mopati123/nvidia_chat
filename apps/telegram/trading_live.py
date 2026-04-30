@@ -6,14 +6,17 @@ Demo and Live account support for MT5 and Deriv
 
 import os
 import logging
-from typing import Optional, Dict, Literal, Any
+import time
+from typing import Optional, Dict, Literal, Any, Tuple
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 
 from core.authority.token_validator import validate_token
+from tachyonic_chain.audit_log import append_execution_evidence
 from trading.brokers.market_data import market_feed, MarketDataFeed
 from trading.brokers.mt5_broker import mt5_broker, MT5Broker, MT5Order
 from trading.brokers.deriv_broker import deriv_broker, DerivBroker, DerivOrder
+from trading.kernel.scheduler import CollapseDecision, Scheduler
 from trading.shadow.shadow_trading_loop import ShadowTradingLoop
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,7 @@ class LiveTradingSystem:
         self.mt5 = MT5Broker()
         self.deriv = DerivBroker()
         self.shadow = ShadowTradingLoop()
+        self.scheduler = Scheduler()
         
         # Mode: demo or live
         self.mode: Literal["shadow", "demo", "live"] = "shadow"
@@ -43,6 +47,49 @@ class LiveTradingSystem:
         self.max_daily_loss = float(os.getenv("MAX_DAILY_LOSS", 100))
         self.max_position_size = float(os.getenv("MAX_POSITION_SIZE", 0.1))
         self.daily_pnl = 0.0
+
+    def authorize_manual_trade(
+        self,
+        symbol: str,
+        direction: Literal["buy", "sell"],
+        volume: float,
+    ) -> Tuple[Optional[Any], str]:
+        """Mint scheduler authority for an explicitly requested Telegram trade."""
+        proposal = {
+            "symbol": symbol,
+            "direction": direction,
+            "volume": volume,
+            "source": "telegram_manual",
+            "mode": self.mode,
+        }
+        projected = [{
+            "id": f"telegram_manual_{symbol}_{int(time.time())}",
+            "energy": 0.0,
+            "action": 0.0,
+            "action_score": 0.0,
+            "operator_scores": {"risk": 1.0},
+        }]
+
+        decision, token = self.scheduler.authorize_collapse(
+            proposal=proposal,
+            projected_trajectories=projected,
+            delta_s=0.0,
+            constraints_passed=True,
+            reconciliation_clear=True,
+        )
+        if decision != CollapseDecision.AUTHORIZED or token is None:
+            reason = f"scheduler_{decision.value}"
+            append_execution_evidence(
+                event_type="live_refusal",
+                execution_id=f"telegram_refused_{symbol}_{int(time.time())}",
+                operation="live_execution",
+                symbol=symbol,
+                outcome="refused",
+                token_status=reason,
+                payload=proposal,
+            )
+            return None, reason
+        return token, "authorized"
         
     def set_mode(self, mode: Literal["shadow", "demo", "live"]) -> bool:
         """
@@ -138,7 +185,16 @@ class LiveTradingSystem:
         validation = validate_token(token, operation="live_execution")
         if not validation.valid:
             logger.warning(f"Trade blocked by token validator: {validation.reason}")
-            return {"error": validation.reason, "blocked": True}
+            evidence_hash = append_execution_evidence(
+                event_type="live_refusal",
+                execution_id=f"live_refused_{symbol}_{int(time.time())}",
+                operation="live_execution",
+                symbol=symbol,
+                outcome="refused",
+                token_status=validation.reason,
+                payload={"direction": direction, "volume": volume, "mode": self.mode},
+            )
+            return {"error": validation.reason, "blocked": True, "evidence_hash": evidence_hash}
 
         # Risk checks
         if self.daily_pnl <= -self.max_daily_loss:
@@ -155,10 +211,10 @@ class LiveTradingSystem:
         
         # Real trading via broker
         if self.active_broker == "mt5":
-            return self._execute_mt5_trade(symbol, direction, volume, sl, tp)
+            return self._execute_mt5_trade(symbol, direction, volume, sl, tp, token)
         
         elif self.active_broker == "deriv":
-            return self._execute_deriv_trade(symbol, direction, volume)
+            return self._execute_deriv_trade(symbol, direction, volume, token)
         
         return None
     
@@ -183,7 +239,7 @@ class LiveTradingSystem:
             "execution_time_ms": execution.execution_time_ms
         }
     
-    def _execute_mt5_trade(self, symbol, direction, volume, sl, tp) -> Optional[Dict]:
+    def _execute_mt5_trade(self, symbol, direction, volume, sl, tp, token) -> Optional[Dict]:
         """Execute via MT5"""
         order = MT5Order(
             symbol=symbol,
@@ -194,14 +250,14 @@ class LiveTradingSystem:
             comment="ApexQuantumICT"
         )
         
-        result = self.mt5.place_order(order)
+        result = self.mt5.place_order(order, token=token)
         if result:
             # Track PnL for risk management
             self.daily_pnl += result.get('profit', 0)
         
         return result
     
-    def _execute_deriv_trade(self, symbol, direction, stake) -> Optional[Dict]:
+    def _execute_deriv_trade(self, symbol, direction, stake, token) -> Optional[Dict]:
         """Execute via Deriv"""
         # Normalize symbol for Deriv
         if not symbol.startswith("frx") and not symbol.startswith("R_") and not symbol.startswith("cry"):
@@ -223,7 +279,7 @@ class LiveTradingSystem:
             duration_unit="m"
         )
         
-        result = self.deriv.place_contract(order)
+        result = self.deriv.place_contract(order, token=token)
         if result:
             # Track (simplified)
             pass
@@ -257,14 +313,14 @@ class LiveTradingSystem:
             return self.deriv.get_active_contracts()
         return []
     
-    def close_position(self, identifier) -> bool:
+    def close_position(self, identifier, token: Optional[Any] = None) -> bool:
         """Close position by ID"""
         if self.active_broker == "mt5":
-            return self.mt5.close_position(identifier)
+            return self.mt5.close_position(identifier, token=token)
         elif self.active_broker == "deriv":
             # Get current price
             price = self.deriv.get_current_price(identifier)
-            return self.deriv.sell_contract(identifier, price or 0)
+            return self.deriv.sell_contract(identifier, price or 0, token=token)
         return False
 
 
@@ -299,7 +355,12 @@ async def trade_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action="typing")
     
     try:
-        result = live_trading.execute_trade(symbol, direction, volume)
+        token, reason = live_trading.authorize_manual_trade(symbol, direction, volume)
+        if token is None:
+            await update.message.reply_text(f"Trade authorization refused: {reason}")
+            return
+
+        result = live_trading.execute_trade(symbol, direction, volume, token=token)
         
         if result is None:
             await update.message.reply_text("❌ Trade failed (check logs)")

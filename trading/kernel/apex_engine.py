@@ -13,6 +13,7 @@ from enum import Enum
 
 from .scheduler import Scheduler, CollapseDecision, ExecutionToken
 from .H_constraints import ConstraintHamiltonian
+from .token_authority import TokenAuthority
 
 
 class ExecutionMode(Enum):
@@ -72,8 +73,15 @@ class ApexEngine:
 
     def __init__(self,
                  scheduler: Optional[Scheduler] = None,
-                 constraints: Optional[ConstraintHamiltonian] = None):
-        self.scheduler = scheduler or Scheduler()
+                 constraints: Optional[ConstraintHamiltonian] = None,
+                 token_authority: Optional[TokenAuthority] = None):
+        if scheduler is None:
+            self.scheduler = Scheduler(token_authority=token_authority)
+        else:
+            self.scheduler = scheduler
+            if token_authority is not None:
+                self.scheduler.token_authority = token_authority
+        self.token_authority = self.scheduler.token_authority
         self.constraints = constraints or ConstraintHamiltonian()
         self.execution_history: List[ExecutionResult] = []
         self.current_state: Dict[str, Any] = {}
@@ -149,6 +157,7 @@ class ApexEngine:
         )
 
         if decision == CollapseDecision.REFUSED:
+            self.scheduler.release_execution_token(token)
             self._engine_state = EngineState.IDLE
             result = ExecutionResult(
                 outcome=ExecutionOutcome.REFUSED,
@@ -163,6 +172,7 @@ class ApexEngine:
             return result
 
         if decision == CollapseDecision.DEFERRED:
+            self.scheduler.release_execution_token(token)
             self._engine_state = EngineState.IDLE
             result = ExecutionResult(
                 outcome=ExecutionOutcome.DEFERRED,
@@ -181,6 +191,7 @@ class ApexEngine:
 
         # Validate token before using it
         if token is None or not token.is_valid():
+            self.scheduler.release_execution_token(token)
             self._engine_state = EngineState.IDLE
             result = ExecutionResult(
                 outcome=ExecutionOutcome.REFUSED,
@@ -194,39 +205,41 @@ class ApexEngine:
             self.execution_history.append(result)
             return result
 
-        # Step 5: State update — gated on COLLAPSED state
-        selected_traj = self._select_best_trajectory(admissible, token)
-        self._transition(EngineState.COLLAPSED, EngineState.EXECUTING)
+        try:
+            # Step 5: State update — gated on COLLAPSED state
+            selected_traj = self._select_best_trajectory(admissible, token)
+            self._transition(EngineState.COLLAPSED, EngineState.EXECUTING)
 
-        if mode == ExecutionMode.LIVE:
-            self._execute_live(selected_traj, market_state)
-        else:
-            self._execute_shadow(selected_traj, market_state)
+            if mode == ExecutionMode.LIVE:
+                self._execute_live(selected_traj, market_state)
+            else:
+                self._execute_shadow(selected_traj, market_state)
 
-        # Step 6: Reconciliation
-        self._transition(EngineState.EXECUTING, EngineState.RECONCILED)
-        reconciliation_ok = self._reconcile_execution(selected_traj, market_state)
+            # Step 6: Reconciliation
+            self._transition(EngineState.EXECUTING, EngineState.RECONCILED)
+            reconciliation_ok = self._reconcile_execution(selected_traj, market_state)
 
-        # Step 7: Evidence emission
-        self._transition(EngineState.RECONCILED, EngineState.EVIDENCED)
-        evidence_hash = self._emit_evidence(
-            proposal, admissible, token, selected_traj, market_state
-        )
+            # Step 7: Evidence emission
+            self._transition(EngineState.RECONCILED, EngineState.EVIDENCED)
+            evidence_hash = self._emit_evidence(
+                proposal, admissible, token, selected_traj, market_state
+            )
 
-        result = ExecutionResult(
-            outcome=ExecutionOutcome.SUCCESS if reconciliation_ok else ExecutionOutcome.ERROR,
-            token=token,
-            trajectory=selected_traj,
-            evidence_hash=evidence_hash,
-            execution_time_ms=(time.time() - start_time) * 1000,
-            mode=mode
-        )
+            result = ExecutionResult(
+                outcome=ExecutionOutcome.SUCCESS if reconciliation_ok else ExecutionOutcome.ERROR,
+                token=token,
+                trajectory=selected_traj,
+                evidence_hash=evidence_hash,
+                execution_time_ms=(time.time() - start_time) * 1000,
+                mode=mode
+            )
 
-        self.execution_history.append(result)
-        self._update_state(selected_traj, market_state)
-        self._engine_state = EngineState.IDLE  # Reset for next cycle
-
-        return result
+            self.execution_history.append(result)
+            self._update_state(selected_traj, market_state)
+            return result
+        finally:
+            self.scheduler.release_execution_token(token)
+            self._engine_state = EngineState.IDLE  # Reset for next cycle
     
     def _measure_entropy_change(self, 
                                trajectories: List[Dict], 

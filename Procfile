@@ -1,2 +1,2 @@
-web: gunicorn bot_server:app
-worker: python telegram_bot_full.py
+web: gunicorn apps.telegram.bot_server:app
+worker: python -m apps.telegram.telegram_bot_full

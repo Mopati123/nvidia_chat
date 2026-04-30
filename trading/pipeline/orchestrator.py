@@ -265,6 +265,7 @@ class PipelineOrchestrator:
                     StageResult(stage=PipelineStage.FAILED, success=False, error=result.error)
                 )
                 self.failure_count += 1
+                self._release_execution_token(context)
                 return context
             
             # Check for early termination
@@ -276,6 +277,7 @@ class PipelineOrchestrator:
                                    output={'reason': 'scheduler_refused'})
                     )
                     self.success_count += 1
+                    self._release_execution_token(context)
                     return context
         
         # Completed successfully
@@ -288,8 +290,17 @@ class PipelineOrchestrator:
         self.success_count += 1
         
         logger.info(f"Pipeline completed in {context.duration_ms:.2f}ms")
-        
+        self._release_execution_token(context)
         return context
+
+    def _release_execution_token(self, context: PipelineContext) -> None:
+        """Release scheduler-owned authority backing the context token, if present."""
+        token = getattr(context, 'execution_token', None)
+        if token is None:
+            return
+        release = getattr(self.scheduler, 'release_execution_token', None)
+        if callable(release):
+            release(token)
     
     def _execute_stage(self, stage: PipelineStage, context: PipelineContext) -> StageResult:
         """Execute a single pipeline stage"""
