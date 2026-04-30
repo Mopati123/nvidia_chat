@@ -121,7 +121,117 @@ Important: these signals can change scoring through optional `S_HFT`, but they d
 
 ---
 
-## Tutorial 3: Run the Live Dashboard
+## Tutorial 3: Replay Read-Only Order-Book Feeds
+
+The feed layer converts live or replayed depth data into the same `OrderBookSnapshot` shape used by analytics. Fake and replay feeds are safe for CI because they never connect to brokers or execution APIs.
+
+```python
+import asyncio
+from trading.microstructure import FakeOrderBookFeed
+
+book = {
+    "symbol": "BTCUSDT",
+    "timestamp": 1.0,
+    "bids": [["100.0", "2.0"]],
+    "asks": [["100.5", "1.5"]],
+}
+
+async def main():
+    feed = FakeOrderBookFeed([book], symbol="BTCUSDT")
+    async for snapshot in feed.snapshots():
+        print(snapshot.to_dict())
+        print(feed.health_snapshot())
+        break
+
+asyncio.run(main())
+```
+
+`BinanceDepthFeed` is read-only and uses Binance public depth WebSockets. `IBDepthFeed` is a read-only callback bridge for IB/TWS market-depth updates. Neither adapter can place orders.
+
+---
+
+## Tutorial 4: Run A Sandbox HFT Order
+
+Sandbox HFT execution requires a scheduler-issued `hft_execution` token. A normal `live_execution` token is refused.
+
+```python
+from core.authority import HFTExecutionScope, issue_hft_execution_token
+from core.execution import HFTOrderRequest, HFTSandboxGateway
+from trading.kernel.scheduler import Scheduler
+
+scheduler = Scheduler()
+scope = HFTExecutionScope(
+    broker="fake",
+    symbol="BTCUSDT",
+    side="buy",
+    max_notional=50.0,
+    max_slippage_bps=2.0,
+    max_order_count=2,
+    ttl_seconds=60.0,
+    strategy_id="depth_accumulation_demo",
+    sandbox_only=True,
+)
+token = issue_hft_execution_token(scheduler, scope)
+
+request = HFTOrderRequest(
+    broker="fake",
+    symbol="BTCUSDT",
+    side="buy",
+    quantity=0.1,
+    price=100.0,
+    max_slippage_bps=1.0,
+    strategy_id="depth_accumulation_demo",
+    idempotency_key="demo-001",
+)
+
+result = HFTSandboxGateway().execute(
+    request,
+    token=token,
+    feed_health={"stale": False, "update_age_seconds": 0.1},
+)
+print(result.to_dict())
+```
+
+This records audit evidence but does not touch Binance, IB, MT5, Deriv, Telegram, or real broker routing.
+
+---
+
+## Tutorial 5: Code-Gated HFT Canary Routing
+
+The canary layer is off by default. Real routing refuses unless all gates pass:
+
+```text
+ALLOW_REAL_TRADING=1
+HFT_CANARY_ENABLED=1
+HFT_SANDBOX_CERTIFICATION=trading_data/hft/sandbox_certification.json
+HFT_CANARY_MAX_NOTIONAL=10
+HFT_CANARY_DAILY_LOSS_CAP=5
+HFT_CANARY_MAX_ACTIVE_SYMBOLS=1
+HFT_CANARY_SYMBOL=BTCUSDT
+```
+
+The certification file is local-only and generated after sandbox validation:
+
+```python
+from core.execution import write_sandbox_certification
+
+write_sandbox_certification("trading_data/hft/sandbox_certification.json")
+```
+
+Even with env gates enabled, the request still needs a non-sandbox `hft_execution` token, fresh feed health, canary limits, and kill switch clearance. Rollback writes audit evidence and activates the HFT kill switch:
+
+```python
+from core.execution import CodeGatedHFTGateway, BinanceHFTExecutionAdapter
+
+gateway = CodeGatedHFTGateway(broker=BinanceHFTExecutionAdapter(client=None))
+gateway.rollback("operator_requested")
+```
+
+Passing `client=None` keeps the adapter non-operational. Production clients must be injected locally and never committed.
+
+---
+
+## Tutorial 6: Run the Live Dashboard
 
 The dashboard shows real-time PnL, regime, circuit breaker state, and a kill switch.
 
@@ -161,7 +271,7 @@ curl -X POST http://localhost:8080/kill/release
 
 ---
 
-## Tutorial 4: Connect to Deriv Broker
+## Tutorial 7: Connect to Deriv Broker
 
 ### Step 1: Get a Deriv API token
 
@@ -205,7 +315,7 @@ print('Deriv connected:', b.connect())
 
 ---
 
-## Tutorial 5: Connect to MetaTrader 5
+## Tutorial 8: Connect to MetaTrader 5
 
 ### Step 1: Install MetaTrader 5
 
@@ -237,7 +347,7 @@ print('MT5 connected:', b.connect())
 
 ---
 
-## Tutorial 6: Run the Telegram Bot
+## Tutorial 9: Run the Telegram Bot
 
 The Telegram bot lets you control the system and ask questions using AI models (Falcon, Nemotron 70B, Qwen 2.5).
 
@@ -280,7 +390,7 @@ python -m apps.telegram.telegram_bot_full
 
 ---
 
-## Tutorial 7: Run Integration Tests
+## Tutorial 10: Run Integration Tests
 
 ```bash
 # T2 enhancements (geodesic seeds, FAISS, PPO, async, dashboard, Mojo)
@@ -313,7 +423,7 @@ validation/legacy/test_t3a_integration.py::TestT3A1CircuitBreaker::test_ten_fail
 
 ---
 
-## Tutorial 8: Read the Cryptographic Audit Trail
+## Tutorial 11: Read the Cryptographic Audit Trail
 
 Every trade decision is Ed25519-signed and Merkle-chained.
 

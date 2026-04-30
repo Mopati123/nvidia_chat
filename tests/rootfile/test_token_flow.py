@@ -7,14 +7,32 @@ from pathlib import Path
 import numpy as np
 
 from apps.telegram.trading_live import LiveTradingSystem
-from core.authority.execution_token import issue_execution_token
+from core.authority.execution_token import issue_execution_token, issue_hft_execution_token
+from core.authority.hft_token import HFTExecutionScope
+from core.authority.token_validator import validate_token
+from core.execution.hft import (
+    FakeHFTBroker,
+    HFTExecutionState,
+    HFTOrderRequest,
+    HFTRiskLimits,
+    HFTSandboxGateway,
+)
+from core.execution.hft_canary import (
+    BinanceHFTExecutionAdapter,
+    CanaryConfig,
+    CanaryGate,
+    CodeGatedHFTGateway,
+    IBHFTExecutionAdapter,
+    write_sandbox_certification,
+)
 from core.execution.shadow import execute_shadow_authorized
-from tachyonic_chain.audit_log import append_execution_evidence
+from tachyonic_chain.audit_log import append_execution_evidence, verify_execution_evidence_chain
 from tools.token_flow_validator import TokenFlowValidator
 from trading.brokers.deriv_broker import DerivBroker, DerivOrder
 import trading.brokers.mt5_broker as mt5_module
 from trading.brokers.mt5_broker import MT5Broker, MT5Order
 from trading.kernel.apex_engine import ExecutionOutcome
+from trading.kernel.scheduler import Scheduler
 
 
 def make_ohlcv(n: int = 24) -> list[dict]:
@@ -160,3 +178,435 @@ def test_token_flow_validator_accepts_direct_broker_boundaries():
 
     assert validator.validate_file("trading/brokers/mt5_broker.py").valid
     assert validator.validate_file("trading/brokers/deriv_broker.py").valid
+
+
+def _hft_scope(**overrides):
+    values = {
+        "broker": "fake",
+        "symbol": "BTCUSDT",
+        "side": "buy",
+        "max_notional": 50.0,
+        "max_slippage_bps": 2.0,
+        "max_order_count": 2,
+        "ttl_seconds": 60.0,
+        "strategy_id": "test_depth_accumulation",
+        "sandbox_only": True,
+    }
+    values.update(overrides)
+    return HFTExecutionScope(**values)
+
+
+def _hft_request(**overrides):
+    values = {
+        "broker": "fake",
+        "symbol": "BTCUSDT",
+        "side": "buy",
+        "quantity": 0.1,
+        "price": 100.0,
+        "max_slippage_bps": 1.0,
+        "strategy_id": "test_depth_accumulation",
+        "idempotency_key": "idem_1",
+    }
+    values.update(overrides)
+    return HFTOrderRequest(**values)
+
+
+def test_live_execution_token_cannot_authorize_hft_execution():
+    token = issue_execution_token("live_execution", budget=1.0)
+
+    result = validate_token(token, operation="hft_execution", context=_hft_request().validation_context())
+
+    assert not result.valid
+    assert "does not authorize" in result.reason
+
+
+def test_scheduler_issued_hft_token_accepts_sandbox_fake_order(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope())
+    gateway = HFTSandboxGateway(evidence_log=str(tmp_path / "hft.jsonl"))
+
+    result = gateway.execute(_hft_request(), token=token, feed_health={"stale": False, "update_age_seconds": 0.1})
+
+    assert result.accepted is True
+    assert result.outcome == "accepted"
+    assert result.order_id
+    assert result.evidence_hash
+    assert gateway.broker.orders
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_gateway_refuses_missing_wrong_and_expired_tokens(tmp_path: Path):
+    scheduler = Scheduler()
+    expired = issue_hft_execution_token(scheduler, _hft_scope(ttl_seconds=-1.0))
+    wrong_symbol = issue_hft_execution_token(scheduler, _hft_scope(symbol="ETHUSDT"))
+    gateway = HFTSandboxGateway(evidence_log=str(tmp_path / "hft.jsonl"))
+    request = _hft_request()
+
+    assert gateway.execute(request, token=None).outcome == "refused"
+    assert gateway.execute(_hft_request(idempotency_key="idem_2"), token=expired).outcome == "refused"
+    wrong = gateway.execute(_hft_request(idempotency_key="idem_3"), token=wrong_symbol)
+
+    assert wrong.outcome == "refused"
+    assert "symbol" in wrong.reason
+    assert not gateway.broker.orders
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_hard_limits_block_unsafe_orders_and_kill_switch(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope(max_notional=100.0, max_order_count=5))
+    gateway = HFTSandboxGateway(
+        limits=HFTRiskLimits(
+            max_orders_per_minute=1,
+            max_open_notional=20.0,
+            per_symbol_exposure=20.0,
+            stale_feed_cutoff_seconds=0.5,
+            max_slippage_bps=2.0,
+        ),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    stale = gateway.execute(_hft_request(idempotency_key="stale"), token=token, feed_health={"stale": True})
+    slippage = gateway.execute(
+        _hft_request(idempotency_key="slip", max_slippage_bps=3.0),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    accepted = gateway.execute(
+        _hft_request(idempotency_key="ok"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    rate_limited = gateway.execute(
+        _hft_request(idempotency_key="rate"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    gateway.trigger_kill_switch("test")
+    killed = gateway.execute(
+        _hft_request(idempotency_key="kill"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert stale.reason == "stale_feed"
+    assert slippage.reason == "hft token slippage limit exceeded"
+    assert accepted.outcome == "accepted"
+    assert rate_limited.reason == "orders_per_minute_limit_exceeded"
+    assert killed.reason == "kill_switch_active"
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_idempotency_prevents_duplicate_submission(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope())
+    broker = FakeHFTBroker()
+    gateway = HFTSandboxGateway(broker=broker, evidence_log=str(tmp_path / "hft.jsonl"))
+    request = _hft_request(idempotency_key="same")
+
+    first = gateway.execute(request, token=token, feed_health={"stale": False, "update_age_seconds": 0.1})
+    duplicate = gateway.execute(request, token=token, feed_health={"stale": False, "update_age_seconds": 0.1})
+
+    assert first.outcome == "accepted"
+    assert duplicate.outcome == "refused"
+    assert duplicate.reason == "duplicate_idempotency_key"
+    assert len(broker.orders) == 1
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_hft_failed_canceled_and_reconciled_paths_emit_evidence(tmp_path: Path):
+    scheduler = Scheduler()
+    token = issue_hft_execution_token(scheduler, _hft_scope(max_order_count=5))
+    gateway = HFTSandboxGateway(
+        broker=FakeHFTBroker(fail_next=True),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+    failed = gateway.execute(
+        _hft_request(idempotency_key="fail"),
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    accepted_request = _hft_request(idempotency_key="accept")
+    accepted = gateway.execute(
+        accepted_request,
+        token=token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    canceled = gateway.cancel_order(accepted_request, token=token, order_id=accepted.order_id)
+    reconciled = gateway.reconcile_order(accepted_request, order_id=accepted.order_id, realized_pnl=1.23)
+
+    assert failed.outcome == "failed"
+    assert canceled.outcome == "canceled"
+    assert reconciled.outcome == "reconciled"
+    report = verify_execution_evidence_chain(tmp_path / "hft.jsonl")
+    assert report.valid
+
+
+def _canary_config(tmp_path: Path, **overrides):
+    values = {
+        "allow_real_trading": True,
+        "hft_canary_enabled": True,
+        "sandbox_certification_path": str(tmp_path / "cert.json"),
+        "max_notional": 25.0,
+        "max_daily_loss": 5.0,
+        "max_active_symbols": 1,
+        "allowed_symbol": "BTCUSDT",
+    }
+    values.update(overrides)
+    return CanaryConfig(**values)
+
+
+def _real_hft_request(**overrides):
+    values = {
+        "broker": "binance",
+        "symbol": "BTCUSDT",
+        "side": "buy",
+        "quantity": 0.1,
+        "price": 100.0,
+        "max_slippage_bps": 1.0,
+        "strategy_id": "canary_depth_accumulation",
+        "idempotency_key": "canary_1",
+        "sandbox": False,
+    }
+    values.update(overrides)
+    return HFTOrderRequest(**values)
+
+
+def _real_hft_token(tmp_path: Path, *, broker: str = "binance", symbol: str = "BTCUSDT", side: str = "buy"):
+    scheduler = Scheduler()
+    return issue_hft_execution_token(
+        scheduler,
+        _hft_scope(
+            broker=broker,
+            symbol=symbol,
+            side=side,
+            max_notional=50.0,
+            max_slippage_bps=2.0,
+            max_order_count=3,
+            sandbox_only=False,
+        ),
+    )
+
+
+class RecordingClient:
+    def __init__(self):
+        self.calls = []
+
+    def create_order(self, **kwargs):
+        self.calls.append(("binance", kwargs))
+        return {"orderId": "binance_1", "status": "FILLED"}
+
+    def place_market_order(self, **kwargs):
+        self.calls.append(("ib", kwargs))
+        return {"order_id": "ib_1", "status": "submitted"}
+
+
+def test_code_gated_canary_refuses_when_real_trading_env_gate_missing(tmp_path: Path):
+    write_sandbox_certification(tmp_path / "cert.json")
+    client = RecordingClient()
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(client),
+        gate=CanaryGate(_canary_config(tmp_path, allow_real_trading=False)),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    result = gateway.execute(
+        _real_hft_request(),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert result.outcome == "refused"
+    assert result.reason == "real_trading_disabled"
+    assert client.calls == []
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_code_gated_canary_refuses_when_canary_env_gate_missing(tmp_path: Path):
+    write_sandbox_certification(tmp_path / "cert.json")
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(RecordingClient()),
+        gate=CanaryGate(_canary_config(tmp_path, hft_canary_enabled=False)),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    result = gateway.execute(
+        _real_hft_request(),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert result.outcome == "refused"
+    assert result.reason == "hft_canary_disabled"
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_code_gated_canary_refuses_without_valid_sandbox_certification(tmp_path: Path):
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(RecordingClient()),
+        gate=CanaryGate(_canary_config(tmp_path)),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    result = gateway.execute(
+        _real_hft_request(),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert result.outcome == "refused"
+    assert result.reason == "sandbox_certification_required"
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_code_gated_canary_refuses_sandbox_only_token_and_sandbox_request(tmp_path: Path):
+    write_sandbox_certification(tmp_path / "cert.json")
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(RecordingClient()),
+        gate=CanaryGate(_canary_config(tmp_path)),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+    sandbox_token = issue_hft_execution_token(Scheduler(), _hft_scope(broker="binance"))
+
+    sandbox_request = _real_hft_request(idempotency_key="sandbox_req", sandbox=True)
+    sandbox_result = gateway.execute(
+        sandbox_request,
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    token_result = gateway.execute(
+        _real_hft_request(idempotency_key="sandbox_token"),
+        token=sandbox_token,
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert sandbox_result.reason == "real_routing_requires_non_sandbox_request"
+    assert token_result.reason == "hft token is sandbox-only"
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_code_gated_canary_limits_notional_daily_loss_symbol_and_feed_health(tmp_path: Path):
+    write_sandbox_certification(tmp_path / "cert.json")
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(RecordingClient()),
+        gate=CanaryGate(_canary_config(tmp_path, max_notional=5.0)),
+        state=HFTExecutionState(daily_pnl=-6.0),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    notional = gateway.execute(
+        _real_hft_request(idempotency_key="too_big"),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    daily_loss = gateway.execute(
+        _real_hft_request(idempotency_key="loss", quantity=0.01),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    symbol_gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(RecordingClient()),
+        gate=CanaryGate(_canary_config(tmp_path)),
+        evidence_log=str(tmp_path / "symbol.jsonl"),
+    )
+    wrong_symbol = symbol_gateway.execute(
+        _real_hft_request(idempotency_key="wrong_symbol", symbol="ETHUSDT"),
+        token=_real_hft_token(tmp_path, symbol="ETHUSDT"),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+    stale = symbol_gateway.execute(
+        _real_hft_request(idempotency_key="stale"),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": True, "update_age_seconds": 9.0},
+    )
+
+    assert notional.reason == "canary_notional_limit_exceeded"
+    assert daily_loss.reason == "canary_daily_loss_cap_exceeded"
+    assert wrong_symbol.reason == "canary_symbol_not_allowed"
+    assert stale.reason == "stale_feed"
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+    assert verify_execution_evidence_chain(tmp_path / "symbol.jsonl").valid
+
+
+def test_code_gated_canary_blocks_second_active_symbol(tmp_path: Path):
+    write_sandbox_certification(tmp_path / "cert.json")
+    state = HFTExecutionState(per_symbol_notional={"BTCUSDT": 10.0})
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(RecordingClient()),
+        gate=CanaryGate(_canary_config(tmp_path, allowed_symbol=None, max_active_symbols=1)),
+        state=state,
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    result = gateway.execute(
+        _real_hft_request(symbol="ETHUSDT", idempotency_key="eth"),
+        token=_real_hft_token(tmp_path, symbol="ETHUSDT"),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert result.reason == "canary_active_symbol_limit_exceeded"
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_code_gated_canary_calls_fake_binance_only_after_all_gates_pass(tmp_path: Path):
+    write_sandbox_certification(tmp_path / "cert.json")
+    client = RecordingClient()
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(client),
+        gate=CanaryGate(_canary_config(tmp_path)),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    result = gateway.execute(
+        _real_hft_request(),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert result.outcome == "accepted"
+    assert result.order_id == "binance_1"
+    assert client.calls == [("binance", {"symbol": "BTCUSDT", "side": "BUY", "type": "MARKET", "quantity": 0.1})]
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_code_gated_canary_calls_fake_ib_only_after_all_gates_pass(tmp_path: Path):
+    write_sandbox_certification(tmp_path / "cert.json")
+    client = RecordingClient()
+    gateway = CodeGatedHFTGateway(
+        broker=IBHFTExecutionAdapter(client),
+        gate=CanaryGate(_canary_config(tmp_path, allowed_symbol="AAPL")),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    result = gateway.execute(
+        _real_hft_request(broker="ib", symbol="AAPL"),
+        token=_real_hft_token(tmp_path, broker="ib", symbol="AAPL"),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert result.outcome == "accepted"
+    assert result.order_id == "ib_1"
+    assert client.calls == [("ib", {"symbol": "AAPL", "side": "buy", "quantity": 0.1})]
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid
+
+
+def test_code_gated_canary_rollback_writes_evidence_and_activates_kill_switch(tmp_path: Path):
+    gateway = CodeGatedHFTGateway(
+        broker=BinanceHFTExecutionAdapter(RecordingClient()),
+        gate=CanaryGate(_canary_config(tmp_path)),
+        evidence_log=str(tmp_path / "hft.jsonl"),
+    )
+
+    evidence_hash = gateway.rollback("operator_requested")
+    result = gateway.execute(
+        _real_hft_request(),
+        token=_real_hft_token(tmp_path),
+        feed_health={"stale": False, "update_age_seconds": 0.1},
+    )
+
+    assert evidence_hash
+    assert gateway.gateway.state.kill_switch_active is True
+    assert result.reason in {"sandbox_certification_required", "kill_switch_active"}
+    assert verify_execution_evidence_chain(tmp_path / "hft.jsonl").valid

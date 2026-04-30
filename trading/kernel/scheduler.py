@@ -446,6 +446,20 @@ class Scheduler:
             authorization_signature=signature,
             lambda_parameters=lambda_params
         )
+
+    def issue_hft_execution_token(self, scope):
+        """Mint scoped sandbox HFT execution authority.
+
+        The rootfile law keeps token minting inside the scheduler. HFT tokens
+        are intentionally narrow and are validated again at execution time.
+        """
+        from core.authority.hft_token import HFTExecutionScope, _mint_hft_execution_token
+
+        if isinstance(scope, dict):
+            scope = HFTExecutionScope(**scope)
+        if not isinstance(scope, HFTExecutionScope):
+            raise TypeError("scope must be HFTExecutionScope or a compatible dictionary")
+        return _mint_hft_execution_token(scope)
     
     def get_scheduler_status(self) -> Dict[str, Any]:
         """Current scheduler state for evidence emission"""

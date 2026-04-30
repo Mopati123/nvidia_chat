@@ -220,7 +220,21 @@ S[γ] = w_L*S_L + w_T*S_T + w_E*S_E + w_R*S_R + w_HFT*S_HFT
 
 `S_HFT` rewards alignment between the proposed path and book pressure, and heavily penalizes crossed/inverted books. This improves entry timing and trajectory filtering while preserving the rootfile invariant that only scheduler-issued tokens can authorize execution.
 
-**Files:** `trading/microstructure/order_book.py`, `trading/action/upgraded_components.py`, `core/simulation/order_book.py`
+The read-only feed layer can now normalize Binance public depth streams, IB/TWS market-depth callbacks, and fake/replay CI data into the same `OrderBookSnapshot` shape. Feed adapters expose health metrics (`update_age_seconds`, queue depth, dropped updates, reconnect count, stale status, and last error), but they do not import execution surfaces or place orders.
+
+**Files:** `trading/microstructure/order_book.py`, `trading/microstructure/feeds.py`, `trading/action/upgraded_components.py`, `core/simulation/order_book.py`
+
+### Sandbox HFT Execution Boundary
+
+HFT execution has a separate authority scope from normal live execution. A `live_execution` token cannot authorize HFT. The scheduler must mint an `hft_execution` token with broker, symbol, side, max notional, max slippage, max order count, TTL, strategy id, and sandbox-only scope.
+
+The first execution gateway is fake-broker only. It validates token scope, feed freshness, slippage, orders/minute, open notional, per-symbol exposure, daily loss cap, idempotency keys, cooldown state, and kill switch status before recording an accepted sandbox order. Accepted, refused, failed, canceled, and reconciled paths all append durable audit-chain evidence.
+
+Real-routing canary support is code-gated and refusal-first. `CodeGatedHFTGateway` refuses until `ALLOW_REAL_TRADING=1`, `HFT_CANARY_ENABLED=1`, a valid sandbox certification file, a non-sandbox `hft_execution` token, fresh feed health, canary notional caps, symbol caps, loss caps, and kill-switch checks all pass. Binance and IB adapters are thin client wrappers and are only invoked after those gates.
+
+Rollback sets the HFT kill switch and writes `hft_canary_rollback` evidence. The canary layer adds infrastructure only; it does not activate real-money trading by itself.
+
+**Files:** `core/authority/hft_token.py`, `core/execution/hft.py`, `core/execution/hft_canary.py`, `trading/kernel/scheduler.py`
 
 ---
 

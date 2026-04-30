@@ -8,10 +8,12 @@
   "core.authority": [
     "taep.core.state",
     "taep.scheduler.execution_token",
-    "trading.kernel.scheduler"
+    "trading.kernel.scheduler",
+    "core.authority.hft_token"
   ],
   "core.execution": [
     "trading.shadow.shadow_trading_loop",
+    "core.execution.hft",
     "apps.telegram.trading_live",
     "trading.brokers.mt5_broker",
     "trading.brokers.deriv_broker"
@@ -20,6 +22,7 @@
     "trading.path_integral.trajectory_generator",
     "trading.geometry",
     "trading.microstructure.order_book",
+    "trading.microstructure.feeds",
     "trading.agents",
     "trading.rl"
   ],
