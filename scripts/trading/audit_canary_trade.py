@@ -257,15 +257,15 @@ def audit_canary_trade(
         blockers.append(f"MT5 execution retcode/outcome not successful for ticket {ticket}")
 
     artifact_ok = bool(csv_row and evidence and str(payload.get("ticket")) == str(ticket))
-    if artifact_ok and mt5_position and mt5_position.get("checked"):
-        artifact_ok = bool(mt5_position.get("matching_position"))
     gates.append(_gate(
         "artifact_consistency",
         "passed" if artifact_ok else "failed",
-        "CSV ticket, broker evidence, and optional MT5 position match",
+        "CSV ticket and broker evidence match; MT5 position check is informational after close",
         csv_ticket=csv_row.get("ticket") if csv_row else None,
         evidence_ticket=payload.get("ticket"),
         mt5_checked=mt5_position.get("checked") if mt5_position else False,
+        mt5_open_positions=mt5_position.get("open_positions_total") if mt5_position else None,
+        mt5_matching_position=bool(mt5_position.get("matching_position")) if mt5_position else None,
     ))
     if not artifact_ok:
         blockers.append(f"artifact mismatch for ticket {ticket}")

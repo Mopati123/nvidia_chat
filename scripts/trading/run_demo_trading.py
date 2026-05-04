@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import json
 import logging
 import os
 import pathlib
@@ -48,6 +49,48 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("demo_trading")
+
+
+def _persist_ppo_state(ppo_hook, checkpoint_path: Optional[pathlib.Path],
+                       pending_path: Optional[pathlib.Path], reason: str) -> None:
+    """Persist PPO checkpoint plus pending trade-entry state."""
+    if ppo_hook is None:
+        return
+    try:
+        if checkpoint_path:
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            ppo_hook.agent.save(str(checkpoint_path))
+        if pending_path:
+            pending_path.parent.mkdir(parents=True, exist_ok=True)
+            pending_path.write_text(
+                json.dumps(ppo_hook.export_pending(), indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        logger.info(
+            "PPO state persisted (%s): pending=%d",
+            reason,
+            ppo_hook.pending_count() if hasattr(ppo_hook, "pending_count") else -1,
+        )
+    except Exception as exc:
+        logger.warning("PPO state persistence failed (%s): %s", reason, exc)
+
+
+def _load_ppo_state(ppo_agent, ppo_hook, checkpoint_path: pathlib.Path,
+                    pending_path: pathlib.Path) -> None:
+    """Load durable PPO checkpoint and pending live-demo trade state if present."""
+    if checkpoint_path.exists():
+        try:
+            ppo_agent.load(str(checkpoint_path))
+            logger.info("PPO checkpoint loaded: %s", checkpoint_path)
+        except Exception as exc:
+            logger.warning("PPO checkpoint load failed (%s): %s", checkpoint_path, exc)
+    if pending_path.exists():
+        try:
+            payload = json.loads(pending_path.read_text(encoding="utf-8"))
+            imported = ppo_hook.import_pending(payload)
+            logger.info("PPO pending trade state loaded: %d from %s", imported, pending_path)
+        except Exception as exc:
+            logger.warning("PPO pending state load failed (%s): %s", pending_path, exc)
 
 # ---------------------------------------------------------------------------
 # Tick → OHLCV accumulator
@@ -172,7 +215,9 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                             csv_writer=None, csv_file=None,
                             live_mode: bool = False, mt5_broker_ref=None,
                             start_equity: float = 0.0, max_loss: float = 20.0,
-                            trade_cooldown: float = 300.0):
+                            trade_cooldown: float = 300.0,
+                            ppo_checkpoint_path: Optional[pathlib.Path] = None,
+                            ppo_pending_path: Optional[pathlib.Path] = None):
     """Returns the function passed to AsyncTickLoop as pipeline_fn."""
     import MetaTrader5 as _mt5_api
     from trading.brokers.mt5_broker import mt5_position_tracker as _tracker
@@ -270,28 +315,49 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
             # Register position with MT5 close tracker — real PnL feeds PPO on close
             if ppo_hook and hasattr(ctx, "execution_result") and ctx.execution_result:
                 import threading as _threading
-                trade_id  = ctx.execution_result.get("order_id", f"t_{int(time.time())}")
+                from types import SimpleNamespace
+
+                trade_id = str(ctx.execution_result.get("order_id", f"t_{int(time.time())}"))
                 predicted = p.get("predicted_pnl", 10.0)
 
                 _selected_path    = getattr(ctx, 'selected_path', {}) or {}
                 _action_weights   = getattr(ctx, 'action_weights', {}) or {}
                 _memory_embedding = getattr(ctx, 'memory_embedding', None)
 
-                class _FakeCtx:
-                    status        = "executed"
-                    routed_order  = type("r", (), {"symbol": symbol})()
-                    entry_time    = time.time()
-                    selected_path = _selected_path
-                    action_weights = _action_weights
-                    operator_scores = _selected_path   # O1–O18 embedded in selected_path
-                    memory_embedding = _memory_embedding
+                fake_ctx = SimpleNamespace(
+                    status="executed",
+                    trade_id=trade_id,
+                    routed_order=SimpleNamespace(symbol=symbol),
+                    entry_time=time.time(),
+                    selected_path=_selected_path,
+                    action_weights=_action_weights,
+                    operator_scores=_selected_path,   # O1–O18 embedded in selected_path
+                    memory_embedding=_memory_embedding,
+                )
 
-                ppo_hook.on_trade_executed(_FakeCtx())
+                ppo_hook.on_trade_executed(fake_ctx)
+                _persist_ppo_state(
+                    ppo_hook,
+                    ppo_checkpoint_path,
+                    ppo_pending_path,
+                    "trade_entry",
+                )
 
                 def _ppo_callback(tid: str, realized: float) -> None:
-                    ppo_hook.on_trade_closed(tid, realized)
+                    stored = ppo_hook.on_trade_closed(tid, realized)
+                    _persist_ppo_state(
+                        ppo_hook,
+                        ppo_checkpoint_path,
+                        ppo_pending_path,
+                        "trade_close" if stored else "trade_close_no_pending",
+                    )
                     stats.ppo_update()
-                    logger.info("PPO updated | trade %s | realized $%.2f", tid, realized)
+                    logger.info(
+                        "PPO feedback %s | trade %s | realized $%.2f",
+                        "stored" if stored else "missing-pending",
+                        tid,
+                        realized,
+                    )
 
                 if live_mode and mt5_broker_ref is not None:
                     try:
@@ -343,7 +409,15 @@ def main():
                         help="Position size in lots for live-demo mode (default: 0.01)")
     parser.add_argument("--max-loss", type=float, default=20.0,
                         help="Session equity drawdown limit in USD before auto-stop (default: $20)")
+    parser.add_argument("--ppo-checkpoint", default="data/models/ppo_live_demo.pt",
+                        help="Durable PPO checkpoint for demo feedback")
+    parser.add_argument("--ppo-pending", default="data/models/ppo_live_demo_pending.json",
+                        help="Pending PPO trade-entry states for restart-safe settlement")
     args = parser.parse_args()
+
+    if args.live_demo and args.mode != "mt5":
+        logger.error("Live-demo forward tests are MT5-only. Use --mode mt5.")
+        sys.exit(2)
 
     print("=" * 60)
     print("  ApexQuantumICT — Live Demo Trading")
@@ -376,11 +450,14 @@ def main():
     logger.info("Initialising PPO RL agent...")
     ppo_agent = None
     ppo_hook = None
+    ppo_checkpoint_path = pathlib.Path(args.ppo_checkpoint)
+    ppo_pending_path = pathlib.Path(args.ppo_pending)
     try:
         from trading.rl.scheduler_agent import PPOSchedulerAgent
         from trading.rl.ppo_paper_hook import PPOPaperHook
         ppo_agent = PPOSchedulerAgent()
         ppo_hook = PPOPaperHook(ppo_agent)
+        _load_ppo_state(ppo_agent, ppo_hook, ppo_checkpoint_path, ppo_pending_path)
         logger.info("PPO agent ready (state_dim=166, buffer=%d)", ppo_agent.buffer.buffer_size)
     except Exception as exc:
         logger.warning("PPO not available: %s — continuing without ML feedback", exc)
@@ -446,10 +523,30 @@ def main():
     start_equity: float = 0.0
     if live_mode:
         from trading.brokers.mt5_broker import mt5_broker as _mt5_singleton
+        import MetaTrader5 as _mt5_api
+
+        account_info = mt5_broker.get_account_info() or {}
+        if account_info.get("trade_mode") != "demo":
+            logger.error("Live-demo refused: MT5 account is not demo")
+            sys.exit(2)
+
+        terminal_info = _mt5_api.terminal_info()
+        if not terminal_info or not getattr(terminal_info, "trade_allowed", False):
+            logger.error("Live-demo refused: MT5 terminal AutoTrading is disabled")
+            sys.exit(2)
+
+        open_positions = _mt5_api.positions_get()
+        if open_positions is None:
+            logger.error("Live-demo refused: could not read MT5 open positions")
+            sys.exit(2)
+        if len(open_positions) > 0:
+            tickets = ", ".join(str(getattr(pos, "ticket", "?")) for pos in open_positions)
+            logger.error("Live-demo refused: %d open MT5 position(s): %s", len(open_positions), tickets)
+            sys.exit(2)
+
         _mt5_singleton.connected = True          # Stage 16 checks this flag
         os.environ["MAX_POSITION_SIZE"] = str(args.lot_size)
-        acct = mt5_broker.get_account_info()
-        start_equity = acct.get("equity", 0.0) if acct else 0.0
+        start_equity = account_info.get("equity", 0.0)
         logger.info("LIVE DEMO ready — lot=%.2f | start equity=$%.2f | session loss limit=$%.0f",
                     args.lot_size, start_equity, args.max_loss)
 
@@ -478,6 +575,8 @@ def main():
         live_mode=live_mode, mt5_broker_ref=mt5_broker if live_mode else None,
         start_equity=start_equity, max_loss=args.max_loss,
         trade_cooldown=300.0,  # 5 min minimum between trades in live mode
+        ppo_checkpoint_path=ppo_checkpoint_path if ppo_hook else None,
+        ppo_pending_path=ppo_pending_path if ppo_hook else None,
     )
 
     # ------------------------------------------------------------------

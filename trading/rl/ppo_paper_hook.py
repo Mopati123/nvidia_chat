@@ -10,7 +10,7 @@ Triggers agent.update() whenever the rollout buffer reaches capacity.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -59,7 +59,7 @@ class PPOPaperHook:
         """Called after close_position() computes realized PnL."""
         entry = self._pending.pop(trade_id, None)
         if entry is None:
-            return
+            return False
         state_vec, action_idx, log_prob, value = entry
         reward = float(np.tanh(pnl / 100.0))  # normalize to [-1, 1]
         self.agent.store_transition(state_vec, action_idx, reward, log_prob, value, done=True)
@@ -70,6 +70,46 @@ class PPOPaperHook:
                 logger.info("PPO update triggered after buffer fill")
             except Exception as exc:
                 logger.warning("PPO update failed: %s", exc)
+        return True
+
+    def has_pending(self, trade_id: str) -> bool:
+        """Return whether a trade has a stored entry state awaiting realized PnL."""
+        return str(trade_id) in self._pending
+
+    def pending_count(self) -> int:
+        """Return the number of pending trade states."""
+        return len(self._pending)
+
+    def export_pending(self) -> Dict[str, Dict[str, Any]]:
+        """Export pending trade states to a JSON-serializable structure."""
+        exported: Dict[str, Dict[str, Any]] = {}
+        for trade_id, (state_vec, action_idx, log_prob, value) in self._pending.items():
+            exported[str(trade_id)] = {
+                "state": np.asarray(state_vec, dtype=np.float32).tolist(),
+                "action_idx": int(action_idx),
+                "log_prob": float(log_prob),
+                "value": float(value),
+            }
+        return exported
+
+    def import_pending(self, payload: Dict[str, Dict[str, Any]]) -> int:
+        """Import pending trade states exported by :meth:`export_pending`."""
+        imported = 0
+        for trade_id, item in (payload or {}).items():
+            try:
+                state_vec = np.asarray(item["state"], dtype=np.float32)
+                if state_vec.shape != (self.STATE_DIM,):
+                    continue
+                self._pending[str(trade_id)] = (
+                    state_vec,
+                    int(item["action_idx"]),
+                    float(item["log_prob"]),
+                    float(item["value"]),
+                )
+                imported += 1
+            except (KeyError, TypeError, ValueError):
+                continue
+        return imported
 
     # ------------------------------------------------------------------
     # State construction
@@ -123,4 +163,7 @@ class PPOPaperHook:
 
     @staticmethod
     def _trade_id(context: "PaperTradeContext") -> str:
+        explicit = getattr(context, 'trade_id', None)
+        if explicit:
+            return str(explicit)
         return f"{context.routed_order.symbol}_{int(context.entry_time * 1000)}"

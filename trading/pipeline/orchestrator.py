@@ -1191,7 +1191,7 @@ class PipelineOrchestrator:
             "flagged" if divergence_flagged else "passed",
             price_divergence=f"{price_divergence:.8f}",
             pnl_divergence=f"{pnl_divergence:.4f}",
-            status=status,
+            reconciliation_status=status,
             symbol=context.symbol,
         )
         return {
