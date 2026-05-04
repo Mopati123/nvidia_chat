@@ -271,7 +271,7 @@ curl -X POST http://localhost:8080/kill/release
 
 ---
 
-## Tutorial 4: Connect to Deriv Broker
+## Tutorial 7: Connect to Deriv Broker
 
 ### Step 1: Get a Deriv API token
 
@@ -315,7 +315,7 @@ print('Deriv connected:', b.connect())
 
 ---
 
-## Tutorial 5: Connect to MetaTrader 5
+## Tutorial 8: Connect to MetaTrader 5
 
 ### Step 1: Install MetaTrader 5
 
@@ -347,7 +347,7 @@ print('MT5 connected:', b.connect())
 
 ---
 
-## Tutorial 6: Run the Telegram Bot
+## Tutorial 9: Run the Telegram Bot
 
 The Telegram bot lets you control the system and ask questions using AI models (Falcon, Nemotron 70B, Qwen 2.5).
 
@@ -390,7 +390,7 @@ python -m apps.telegram.telegram_bot_full
 
 ---
 
-## Tutorial 6: Run Integration Tests
+## Tutorial 10: Run Integration Tests
 
 ```bash
 # T2 enhancements (geodesic seeds, FAISS, PPO, async, dashboard, Mojo)
@@ -423,7 +423,7 @@ validation/legacy/test_t3a_integration.py::TestT3A1CircuitBreaker::test_ten_fail
 
 ---
 
-## Tutorial 7: Read the Cryptographic Audit Trail
+## Tutorial 11: Read the Cryptographic Audit Trail
 
 Every trade decision is Ed25519-signed and Merkle-chained.
 

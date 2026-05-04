@@ -211,7 +211,7 @@ market_state = {
     "bos_level": 1.0845
 }
 
-scores = registry.compute_all_scores(market_state)
+scores = registry.get_all_scores(market_state, market_state)
 
 for name, score in scores.items():
     print(f"  {name:12s}: {score:.4f}")

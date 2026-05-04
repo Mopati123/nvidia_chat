@@ -265,6 +265,7 @@ class PipelineOrchestrator:
                     StageResult(stage=PipelineStage.FAILED, success=False, error=result.error)
                 )
                 self.failure_count += 1
+                self._release_execution_token(context)
                 return context
             
             # Check for early termination
@@ -276,6 +277,7 @@ class PipelineOrchestrator:
                                    output={'reason': 'scheduler_refused'})
                     )
                     self.success_count += 1
+                    self._release_execution_token(context)
                     return context
         
         # Completed successfully
@@ -288,8 +290,29 @@ class PipelineOrchestrator:
         self.success_count += 1
         
         logger.info(f"Pipeline completed in {context.duration_ms:.2f}ms")
-        
+        self._release_execution_token(context)
         return context
+
+    def _release_execution_token(self, context: PipelineContext) -> None:
+        """Release scheduler-owned authority backing the context token, if present."""
+        token = getattr(context, 'execution_token', None)
+        if token is None:
+            return
+        release = getattr(self.scheduler, 'release_execution_token', None)
+        if callable(release):
+            release(token)
+
+    def _audit_gate(self, gate: str, status: str, **fields: Any) -> None:
+        """Emit compact, machine-readable audit markers for live canaries."""
+        parts = []
+        for key in sorted(fields):
+            value = fields[key]
+            if value is None:
+                continue
+            text = str(value).replace("\r", " ").replace("\n", " ").strip()
+            parts.append(f"{key}={text.replace(' ', '_')}")
+        suffix = " " + " ".join(parts) if parts else ""
+        logger.info("CANARY_AUDIT gate=%s status=%s%s", gate, status, suffix)
     
     def _execute_stage(self, stage: PipelineStage, context: PipelineContext) -> StageResult:
         """Execute a single pipeline stage"""
@@ -830,6 +853,7 @@ class PipelineOrchestrator:
         """Stage 12: Final admissibility check — hard risk gates enforced here."""
         proposal = context.proposal
         if not proposal:
+            self._audit_gate("stage12_admissibility", "failed", reason="no_proposal")
             return {'admissible': False, 'risk_ok': False, 'reason': 'no_proposal'}
 
         # Π_total: path-wise step validation before any risk computation
@@ -840,6 +864,12 @@ class PipelineOrchestrator:
             )
             if not path_ok:
                 context.risk_check_passed = False
+                self._audit_gate(
+                    "stage12_admissibility",
+                    "failed",
+                    reason=f"pi_total_path_violation:{path_reason}",
+                    symbol=context.symbol,
+                )
                 return {
                     'admissible': False,
                     'risk_ok': False,
@@ -872,6 +902,13 @@ class PipelineOrchestrator:
 
         if not risk_check.passed:
             logger.warning(f"Risk gate FAILED at Stage 12: {risk_check.message}")
+            self._audit_gate(
+                "stage12_admissibility",
+                "failed",
+                reason=risk_check.message,
+                risk_level=risk_check.level.value,
+                symbol=symbol,
+            )
             return {
                 'admissible': False,
                 'risk_ok': False,
@@ -883,6 +920,12 @@ class PipelineOrchestrator:
         stop_dist = abs(entry - proposal.get('stop', entry - 0.0010))
         if stop_dist > 0.0050:  # 50 pip hard max
             context.risk_check_passed = False
+            self._audit_gate(
+                "stage12_admissibility",
+                "failed",
+                reason=f"stop_distance_too_large:{stop_dist:.5f}",
+                symbol=symbol,
+            )
             return {
                 'admissible': False,
                 'risk_ok': False,
@@ -896,6 +939,14 @@ class PipelineOrchestrator:
         predicted_pnl = round(pip_move * proposal['size'] * 10_000, 4)
         proposal['predicted_pnl'] = predicted_pnl
 
+        self._audit_gate(
+            "stage12_admissibility",
+            "passed",
+            direction=direction,
+            risk_level=risk_check.level.value,
+            size=size,
+            symbol=symbol,
+        )
         return {'admissible': True, 'risk_ok': True, 'risk_level': risk_check.level.value}
     
     def _stage_entropy_gate(self, context: PipelineContext) -> Dict:
@@ -905,7 +956,13 @@ class PipelineOrchestrator:
         
         threshold = 0.5
         passed = delta_s < threshold
-        
+
+        self._audit_gate(
+            "stage13_entropy",
+            "passed" if passed else "failed",
+            delta_s=f"{delta_s:.4f}",
+            threshold=f"{threshold:.4f}",
+        )
         return {'delta_s': delta_s, 'passed': passed}
     
     def _stage_scheduler_collapse(self, context: PipelineContext) -> Dict:
@@ -916,6 +973,12 @@ class PipelineOrchestrator:
         if not getattr(context, 'risk_check_passed', False):
             logger.error("Collapse attempted without passing risk gate — REFUSED")
             context.collapse_decision = 'REFUSED'
+            self._audit_gate(
+                "stage15_scheduler",
+                "refused",
+                reason=f"risk_gate_not_passed:{context.risk_check_message}",
+                symbol=context.symbol,
+            )
             return {
                 'decision': 'REFUSED',
                 'authorized': False,
@@ -945,11 +1008,24 @@ class PipelineOrchestrator:
         if not ok:
             context.collapse_decision = 'REFUSED'
             logger.error(f"Stage 15: collapse rejected by circuit breaker — {result}")
+            self._audit_gate(
+                "stage15_scheduler",
+                "refused",
+                reason="circuit_breaker_open",
+                symbol=context.symbol,
+            )
             return {'decision': 'REFUSED', 'authorized': False, 'reason': 'circuit_breaker_open'}
 
         decision, token = result
         context.collapse_decision = decision.name
         context.execution_token = token
+        self._audit_gate(
+            "stage15_scheduler",
+            "passed" if decision == CollapseDecision.AUTHORIZED else "refused",
+            decision=decision.name,
+            symbol=context.symbol,
+            token=token.token_id if token else None,
+        )
 
         try:
             from trading.observability.metrics import MetricsCollector
@@ -966,11 +1042,13 @@ class PipelineOrchestrator:
     def _stage_execution(self, context: PipelineContext) -> Dict:
         """Stage 16: Execute trade — paper simulation or live broker routing."""
         if context.collapse_decision != 'AUTHORIZED':
+            self._audit_gate("stage16_execution", "skipped", reason="not_authorized", symbol=context.symbol)
             return {'executed': False}
 
         # Kill switch guard — never route orders when kill switch is active
         if getattr(self.risk_manager, 'kill_switch_active', False):
             logger.warning("Stage 16: kill switch active — execution blocked")
+            self._audit_gate("stage16_execution", "blocked", reason="kill_switch_active", symbol=context.symbol)
             return {'executed': False, 'reason': 'kill_switch_active'}
 
         if self._paper_mode:
@@ -982,6 +1060,12 @@ class PipelineOrchestrator:
                 'status': 'filled',
                 'realized_pnl': 0.0,
             }
+            self._audit_gate(
+                "stage16_execution",
+                "simulated",
+                order_id=context.execution_result['order_id'],
+                symbol=context.symbol,
+            )
             return {'executed': True, 'order': context.execution_result}
 
         # Live mode: place market order directly on MT5 (Deriv fallback not yet supported)
@@ -1012,6 +1096,14 @@ class PipelineOrchestrator:
                     "Stage 16: MT5 order placed ticket=%s %s %s size=%.2f",
                     result.get('ticket'), direction.upper(), context.symbol, size
                 )
+                self._audit_gate(
+                    "stage16_execution",
+                    "passed",
+                    broker="mt5",
+                    size=size,
+                    symbol=context.symbol,
+                    ticket=result.get('ticket'),
+                )
 
         # --- Deriv fallback ---
         if result is None and _deriv.connected:
@@ -1029,9 +1121,18 @@ class PipelineOrchestrator:
                     "Stage 16: Deriv contract placed %s %s size=%.2f",
                     contract_type, context.symbol, size
                 )
+                self._audit_gate(
+                    "stage16_execution",
+                    "passed",
+                    broker="deriv",
+                    contract_id=result.get('contract_id'),
+                    size=size,
+                    symbol=context.symbol,
+                )
 
         if result is None:
             logger.error("Stage 16: no broker available for live execution — order not placed")
+            self._audit_gate("stage16_execution", "failed", reason="no_broker", symbol=context.symbol)
             return {'executed': False, 'reason': 'no_broker'}
 
         context.execution_result = {
@@ -1047,6 +1148,7 @@ class PipelineOrchestrator:
         """Stage 16: Compare intended vs actual execution"""
         if not context.execution_result:
             context.reconciliation_status = 'no_execution'
+            self._audit_gate("stage17_reconciliation", "skipped", reason="no_execution", symbol=context.symbol)
             return {'status': 'no_execution'}
         
         # Price divergence — compare entry prices
@@ -1084,6 +1186,14 @@ class PipelineOrchestrator:
                 evidence_complete=False
             )
 
+        self._audit_gate(
+            "stage17_reconciliation",
+            "flagged" if divergence_flagged else "passed",
+            price_divergence=f"{price_divergence:.8f}",
+            pnl_divergence=f"{pnl_divergence:.4f}",
+            reconciliation_status=status,
+            symbol=context.symbol,
+        )
         return {
             'status': status,
             'divergence': price_divergence,
@@ -1105,15 +1215,23 @@ class PipelineOrchestrator:
         
         evidence_str = str(evidence_data)
         context.evidence_hash = hashlib.sha256(evidence_str.encode()).hexdigest()[:32]
-        
+
+        self._audit_gate(
+            "stage18_evidence",
+            "passed",
+            evidence_hash=context.evidence_hash,
+            symbol=context.symbol,
+        )
         return {'evidence_hash': context.evidence_hash}
     
     def _stage_weight_update(self, context: PipelineContext) -> Dict:
         """Stage 18: Backward learning - update action weights"""
         if not self.use_weight_learning:
+            self._audit_gate("stage19_weight_update", "skipped", reason="learning_disabled", symbol=context.symbol)
             return {'updated': False, 'reason': 'learning_disabled'}
         
         if context.collapse_decision != 'AUTHORIZED':
+            self._audit_gate("stage19_weight_update", "skipped", reason="not_authorized", symbol=context.symbol)
             return {'updated': False, 'reason': 'not_authorized'}
         
         # Stage 18 learns entry quality (L/T/E/R operator weights), not realized PnL.
@@ -1150,6 +1268,14 @@ class PipelineOrchestrator:
         )
         
         context.weight_update_result = result
+        self._audit_gate(
+            "stage19_weight_update",
+            "passed" if result['updated'] else "flagged",
+            reason=result.get('reason'),
+            reward=f"{result.get('reward', 0.0):.4f}",
+            status=context.reconciliation_status,
+            symbol=context.symbol,
+        )
         
         return {
             'updated': result['updated'],

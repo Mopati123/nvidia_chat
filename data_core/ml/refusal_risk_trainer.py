@@ -24,6 +24,7 @@ NUMERIC_FEATURES = (
     "volume",
     "amount",
     "pnl_prediction",
+    "realized_pnl",
     "retcode",
 )
 CATEGORICAL_FEATURES = (
@@ -32,6 +33,7 @@ CATEGORICAL_FEATURES = (
     "broker",
     "direction",
     "mode",
+    "close_reason",
 )
 
 

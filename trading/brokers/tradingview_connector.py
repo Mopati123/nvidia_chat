@@ -136,7 +136,7 @@ class TradingViewConnector:
         """Verify HMAC signature"""
         # #region agent log
         try:
-            with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+            with open("logs/debug-3c812d.log", "a", encoding="utf-8") as _dbg:
                 _dbg.write(json.dumps({
                     "sessionId": "3c812d",
                     "runId": "pre-fix",
@@ -156,7 +156,7 @@ class TradingViewConnector:
         if not self.api_key:
             # #region agent log
             try:
-                with open("debug-3c812d.log", "a", encoding="utf-8") as _dbg:
+                with open("logs/debug-3c812d.log", "a", encoding="utf-8") as _dbg:
                     _dbg.write(json.dumps({
                         "sessionId": "3c812d",
                         "runId": "pre-fix",

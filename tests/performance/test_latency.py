@@ -236,13 +236,14 @@ class LatencyBenchmarks:
             votes = orchestrator.collect_votes(trajectories, market_state)
             decision = orchestrator.aggregate_votes(votes)
             
-            _, _ = scheduler.authorize_collapse(
+            _, token = scheduler.authorize_collapse(
                 proposal={},
                 projected_trajectories=trajectories,
                 delta_s=0.3,
                 constraints_passed=True,
                 reconciliation_clear=True
             )
+            scheduler.release_execution_token(token)
             
             end = time.perf_counter()
             times.append((end - start) * 1000)

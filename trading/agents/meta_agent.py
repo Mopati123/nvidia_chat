@@ -14,7 +14,7 @@ import numpy as np
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from collections import defaultdict
-from .base_agent import BaseAgent
+from .base_agent import BaseAgent, AgentVote
 import logging
 
 logger = logging.getLogger(__name__)
@@ -341,7 +341,14 @@ class MetaAgent(BaseAgent):
     
     def vote(self, trajectories, market_state, context=None):
         """
-        MetaAgent does not vote on trajectories.
-        This method exists for interface compatibility but should not be called.
+        MetaAgent does not vote on trajectories - it monitors performance.
+        Returns a refusal vote to indicate it does not participate in voting.
         """
-        raise NotImplementedError("MetaAgent does not vote on trajectories")
+        return AgentVote(
+            agent_name=self.name,
+            agent_type=self.agent_type,
+            refusal=True,
+            refusal_reason="MetaAgent does not vote on trajectories",
+            rationale="MetaAgent monitors performance but does not cast votes",
+            confidence=0.0
+        )

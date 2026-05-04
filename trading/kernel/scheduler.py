@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
+from .token_authority import AuthorityToken, TokenAuthority
+
 try:
     import torch
     TORCH_AVAILABLE = True
@@ -43,6 +45,9 @@ class ExecutionToken:
     trajectory_hash: str
     authorization_signature: str
     lambda_parameters: Dict[str, float]
+    authority_token_id: Optional[str] = None
+    authority_owner: Optional[str] = None
+    authority_budget: float = 0.0
     
     def verify(self) -> bool:
         """Verify token integrity"""
@@ -71,10 +76,14 @@ class Scheduler:
     Sole collapse authority. Scheduler sovereignty enforced.
     """
     
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Optional[Dict] = None, token_authority: Optional[TokenAuthority] = None):
         self.config = config or {}
         self.state = SchedulerState()
         self.collapse_history: List[ExecutionToken] = []
+        self.token_authority = token_authority or TokenAuthority(
+            max_active_tokens=int(self.config.get('max_concurrent_ops', 1)),
+            default_budget=float(self.config.get('default_token_budget', 1.0)),
+        )
         self._initialize_weights()
         
         # RL integration (optional)
@@ -247,8 +256,15 @@ class Scheduler:
         # Select best trajectory via weighted energy (with RL if enabled)
         best_traj = self._select_trajectory(projected_trajectories, proposal)
         
-        # Issue ExecutionToken
-        token = self._issue_token(best_traj)
+        authority_token = self._acquire_execution_authority(best_traj, proposal)
+        if authority_token is None:
+            return CollapseDecision.REFUSED, None
+
+        try:
+            token = self._issue_token(best_traj, authority_token)
+        except Exception:
+            self.token_authority.release_token(authority_token)
+            raise
         self.collapse_history.append(token)
         
         return CollapseDecision.AUTHORIZED, token
@@ -420,7 +436,47 @@ class Scheduler:
                 self._last_rl_state = None
                 self._last_rl_action = None
     
-    def _issue_token(self, trajectory: Dict) -> ExecutionToken:
+    def _authority_owner(self, trajectory: Dict, proposal: Dict) -> str:
+        """Build a stable owner label for authority tracking and audit."""
+        symbol = proposal.get('symbol') or trajectory.get('symbol') or 'unknown'
+        trajectory_id = trajectory.get('id') or 'trajectory'
+        return f"scheduler_collapse:{symbol}:{trajectory_id}"
+
+    def _authority_budget(self, trajectory: Dict, proposal: Dict) -> float:
+        """Select the budget assigned to an authority lease."""
+        for candidate in (
+            proposal.get('notional'),
+            proposal.get('size'),
+            trajectory.get('notional'),
+            trajectory.get('budget'),
+            self.config.get('default_token_budget'),
+        ):
+            if candidate is not None:
+                try:
+                    return max(float(candidate), 0.0)
+                except (TypeError, ValueError):
+                    continue
+        return self.token_authority.default_budget
+
+    def _acquire_execution_authority(self, trajectory: Dict, proposal: Dict) -> Optional[AuthorityToken]:
+        owner = self._authority_owner(trajectory, proposal)
+        budget = self._authority_budget(trajectory, proposal)
+        return self.token_authority.issue_token(
+            owner=owner,
+            budget=budget,
+            metadata={
+                "proposal_symbol": proposal.get("symbol"),
+                "trajectory_id": trajectory.get("id"),
+            },
+        )
+
+    def release_execution_token(self, token: Optional[ExecutionToken]) -> None:
+        """Release authority backing a scheduler-issued execution token."""
+        if token is None:
+            return
+        self.token_authority.release_token(getattr(token, "authority_token_id", None))
+
+    def _issue_token(self, trajectory: Dict, authority_token: Optional[AuthorityToken] = None) -> ExecutionToken:
         """Cryptographic authorization token issuance"""
         timestamp = time.time()
         token_id = hashlib.sha256(f"{timestamp}:{trajectory.get('id','')}".encode()).hexdigest()[:16]
@@ -444,7 +500,10 @@ class Scheduler:
             operator_weights=self.state.operator_weights.copy(),
             trajectory_hash=traj_hash,
             authorization_signature=signature,
-            lambda_parameters=lambda_params
+            lambda_parameters=lambda_params,
+            authority_token_id=authority_token.token_id if authority_token else None,
+            authority_owner=authority_token.owner if authority_token else None,
+            authority_budget=authority_token.budget if authority_token else 0.0,
         )
 
     def issue_hft_execution_token(self, scope):
@@ -467,6 +526,12 @@ class Scheduler:
             "operator_weights": self.state.operator_weights,
             "learning_rate": self.state.learning_rate,
             "collapse_count": len(self.collapse_history),
+            "active_authority_tokens": self.token_authority.active_count,
+            "max_concurrent_ops": self.token_authority.max_active_tokens,
             "sovereignty": "SCHEDULER_SOLE_AUTHORITY",
             "refusal_first": True
         }
+
+    def epoch_end(self) -> None:
+        """Release outstanding authority leases at epoch boundaries."""
+        self.token_authority.release_all()

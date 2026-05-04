@@ -42,6 +42,9 @@ DATASET_SCHEMA = pa.schema([
     ("amount", pa.float64()),
     ("execution_time_ms", pa.float64()),
     ("pnl_prediction", pa.float64()),
+    ("realized_pnl", pa.float64()),
+    ("close_reason", pa.string()),
+    ("ppo_feedback_status", pa.string()),
     ("retcode", pa.int64()),
     ("risk_label", pa.int64()),
 ])
@@ -176,6 +179,9 @@ def sanitize_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "amount": _coerce_float(_safe_payload_value(payload, "amount")),
         "execution_time_ms": _coerce_float(_safe_payload_value(payload, "execution_time_ms")),
         "pnl_prediction": _coerce_float(_safe_payload_value(payload, "pnl_prediction")),
+        "realized_pnl": _coerce_float(_safe_payload_value(payload, "realized_pnl")),
+        "close_reason": _safe_string(_safe_payload_value(payload, "close_reason")),
+        "ppo_feedback_status": _safe_string(_safe_payload_value(payload, "ppo_feedback_status")),
         "retcode": _coerce_int(_safe_payload_value(payload, "retcode")),
         "risk_label": _risk_label(record),
     }

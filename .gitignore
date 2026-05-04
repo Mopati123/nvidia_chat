@@ -25,17 +25,19 @@ venv/
 env/
 ENV/
 
-# IDE
+# IDE / local agent state
 .vscode/
 .idea/
+.claude/
+.cursor/
+.qodo/
 *.swp
 *.swo
 *~
 
 # Testing
-test_integration.py
-test_full_system.py
 .pytest_cache/
+test_results/
 
 # Environment variables (NEVER commit these)
 .env
@@ -48,6 +50,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+debug-*.log
+demo_trades_*.csv
 
 # Credential storage
 *.enc
@@ -57,15 +61,13 @@ data/
 # Credentials backup
 *credentials*
 *password*
-!setup_credentials.py
+!scripts/broker/setup_credentials.py
 
 # Private keys — never commit
 *.pem
 *.key
 trading/keys/
 
-# Runtime state snapshots
-trading_data/state/snapshots/
-
-# Local Claude settings
-.claude/settings.local.json
+# Runtime trading state and generated reports
+trading_data/
+PRODUCTION_CERTIFICATE_*.txt
