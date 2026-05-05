@@ -132,6 +132,50 @@ def test_settle_demo_trades_writes_ledger_evidence_and_ml_artifacts(tmp_path: Pa
     assert json.loads(model_path.read_text(encoding="utf-8"))["runtime_integration"] == "offline_only"
 
 
+def test_settle_demo_trades_tolerates_malformed_ppo_pending_json(tmp_path: Path):
+    csv_path = tmp_path / "demo.csv"
+    pending_path = tmp_path / "pending.json"
+    _write_csv(csv_path)
+    pending_path.write_text("{not valid json", encoding="utf-8")
+
+    report = settle_demo_trades(
+        trade_patterns=[csv_path],
+        ledger_path=tmp_path / "settlements.jsonl",
+        evidence_log_path=tmp_path / "evidence.jsonl",
+        ppo_checkpoint_path=tmp_path / "ppo.pt",
+        ppo_pending_path=pending_path,
+        dataset_path=tmp_path / "refusal_risk.parquet",
+        model_path=tmp_path / "model.json",
+        positions=[],
+        history_deals=[_deal(entry=0, profit=0.0), _deal()],
+    )
+
+    assert report.closed == 1
+    assert report.records[0].ppo_feedback_status == "missing_pending_state"
+
+
+def test_settle_demo_trades_tolerates_empty_ppo_pending_json(tmp_path: Path):
+    csv_path = tmp_path / "demo.csv"
+    pending_path = tmp_path / "pending.json"
+    _write_csv(csv_path)
+    pending_path.write_text("", encoding="utf-8")
+
+    report = settle_demo_trades(
+        trade_patterns=[csv_path],
+        ledger_path=tmp_path / "settlements.jsonl",
+        evidence_log_path=tmp_path / "evidence.jsonl",
+        ppo_checkpoint_path=tmp_path / "ppo.pt",
+        ppo_pending_path=pending_path,
+        dataset_path=tmp_path / "refusal_risk.parquet",
+        model_path=tmp_path / "model.json",
+        positions=[],
+        history_deals=[_deal(entry=0, profit=0.0), _deal()],
+    )
+
+    assert report.closed == 1
+    assert report.records[0].ppo_feedback_status == "missing_pending_state"
+
+
 def test_ppo_checkpoint_and_pending_state_round_trip(tmp_path: Path):
     checkpoint_path = tmp_path / "ppo.pt"
     pending_path = tmp_path / "pending.json"

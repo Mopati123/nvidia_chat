@@ -110,7 +110,7 @@ update_action_weights(
 @dataclass
 class ExecutionToken:
     token_id: str      # UUID4
-    signature: str     # Ed25519 HMAC signature
+    signature: str     # authorization signature
     issued_at: float   # Unix timestamp
     expires_at: float  # issued_at + 30s
     budget: float      # max trade size authorized

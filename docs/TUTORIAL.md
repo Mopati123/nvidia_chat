@@ -423,9 +423,9 @@ validation/legacy/test_t3a_integration.py::TestT3A1CircuitBreaker::test_ten_fail
 
 ---
 
-## Tutorial 11: Read the Cryptographic Audit Trail
+## Tutorial 11: Read the Runtime Audit Trail
 
-Every trade decision is Ed25519-signed and Merkle-chained.
+The rootfile runtime appends each execution record to a SHA-256 JSONL hash chain.
 
 ```python
 from trading.evidence.evidence_chain import EvidenceChain
@@ -441,4 +441,4 @@ is_valid = chain.verify_chain()
 print("Chain valid:", is_valid)
 ```
 
-The `anchor_hash` is a SHA-256 Merkle root that chains each record to the previous one — any tampering breaks the chain.
+The `anchor_hash` is a SHA-256 chain anchor that links each record to the previous one. Any tampering breaks verification.

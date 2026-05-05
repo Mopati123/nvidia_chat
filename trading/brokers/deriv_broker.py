@@ -268,6 +268,45 @@ class DerivBroker:
             return response['tick']['quote']
         
         return None
+
+    @staticmethod
+    def _proposal_request(order: DerivOrder) -> Dict:
+        """Build a Deriv proposal request without buying the contract."""
+        return {
+            "proposal": 1,
+            "amount": order.amount,
+            "basis": order.basis,
+            "contract_type": order.contract_type,
+            "currency": "USD",
+            "duration": order.duration,
+            "duration_unit": order.duration_unit,
+            "symbol": order.symbol,
+        }
+
+    def get_contracts_for(self, symbol: str) -> Dict:
+        """Get available contract metadata for a symbol."""
+        if not self.connected:
+            return {}
+
+        response = self._send_request({
+            "contracts_for": symbol,
+        })
+
+        if response and 'contracts_for' in response:
+            return response['contracts_for']
+
+        return {}
+
+    def get_proposal_quote(self, order: DerivOrder) -> Optional[Dict]:
+        """Get a no-buy proposal quote for canary readiness checks."""
+        if not self.connected:
+            return None
+
+        response = self._send_request(self._proposal_request(order))
+        if response and 'proposal' in response:
+            return response['proposal']
+
+        return None
     
     def place_contract(self, order: DerivOrder, *, token: Optional[Any] = None) -> Optional[Dict]:
         """
@@ -297,16 +336,7 @@ class DerivBroker:
             logger.error("Not authorized")
             return None
         
-        proposal = {
-            "proposal": 1,
-            "amount": order.amount,
-            "basis": order.basis,
-            "contract_type": order.contract_type,  # CALL or PUT
-            "currency": "USD",
-            "duration": order.duration,
-            "duration_unit": order.duration_unit,
-            "symbol": order.symbol
-        }
+        proposal = self._proposal_request(order)
         
         # Get proposal — retry once with 50% stake if first attempt fails
         response = self._send_request(proposal)
@@ -397,6 +427,45 @@ class DerivBroker:
         if response and 'portfolio' in response:
             return response['portfolio'].get('contracts', [])
         
+        return []
+
+    def get_contract_status(self, contract_id: int | str) -> Optional[Dict]:
+        """Get the current or final status for one Deriv contract."""
+        if not self.authorized:
+            return None
+
+        try:
+            contract_id_int = int(contract_id)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid contract_id '{contract_id}': {e}")
+            return None
+
+        response = self._send_request({
+            "proposal_open_contract": 1,
+            "contract_id": contract_id_int,
+        })
+
+        if response and 'proposal_open_contract' in response:
+            return response['proposal_open_contract']
+
+        return None
+
+    def get_profit_table(self, *, limit: int = 500, offset: int = 0,
+                         sort: str = "DESC") -> List[Dict]:
+        """Get closed contract profit/loss history for the authorized account."""
+        if not self.authorized:
+            return []
+
+        response = self._send_request({
+            "profit_table": 1,
+            "limit": max(1, min(int(limit), 500)),
+            "offset": max(0, int(offset)),
+            "sort": sort,
+        })
+
+        if response and 'profit_table' in response:
+            return response['profit_table'].get('transactions', [])
+
         return []
     
     def sell_contract(self, contract_id: int, price: float, *, token: Optional[Any] = None) -> Optional[Dict]:
