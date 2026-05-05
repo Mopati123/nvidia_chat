@@ -436,15 +436,13 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                 if csv_file:
                     csv_file.flush()
 
+            deriv_canary_order_id = None
+
             # Record trade time for cooldown
             if live_mode and hasattr(ctx, "execution_result") and ctx.execution_result:
                 _last_trade_time[0] = time.time()
                 if live_broker == "deriv":
-                    logger.info(
-                        "Deriv live-demo canary observed contract %s; stopping after one execution",
-                        ctx.execution_result.get("order_id", "unknown"),
-                    )
-                    os.kill(os.getpid(), signal.SIGINT)
+                    deriv_canary_order_id = ctx.execution_result.get("order_id", "unknown")
 
             # Register position with MT5 close tracker — real PnL feeds PPO on close
             if ppo_hook and hasattr(ctx, "execution_result") and ctx.execution_result:
@@ -512,6 +510,13 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                     _threading.Thread(
                         target=_ppo_callback, args=(trade_id, predicted), daemon=True
                     ).start()
+
+            if deriv_canary_order_id is not None:
+                logger.info(
+                    "Deriv live-demo canary observed contract %s; stopping after PPO entry persistence",
+                    deriv_canary_order_id,
+                )
+                os.kill(os.getpid(), signal.SIGINT)
         else:
             logger.debug("Pipeline REFUSED: %s", symbol)
 
