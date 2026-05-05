@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import glob
 import json
+import logging
 import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from tachyonic_chain.audit_log import append_execution_evidence
 
+logger = logging.getLogger(__name__)
 
 CLOSE_ENTRY = 1
 REASON_MAP = {
@@ -268,7 +270,14 @@ def _load_ppo_hook(checkpoint_path: Path, pending_path: Path):
         agent.load(str(checkpoint_path))
     hook = PPOPaperHook(agent)
     if pending_path.exists():
-        hook.import_pending(json.loads(pending_path.read_text(encoding="utf-8")))
+        pending_text = pending_path.read_text(encoding="utf-8")
+        if pending_text.strip():
+            try:
+                hook.import_pending(json.loads(pending_text))
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse pending data from {pending_path}: {e}. Content: {pending_text[:200]}")
+        else:
+            logger.warning(f"Pending file {pending_path} is empty")
     return hook
 
 

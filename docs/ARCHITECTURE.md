@@ -325,7 +325,7 @@ RAW MARKET DATA (MT5 / Deriv / TradingView)
 │  20     │  COMPLETED               │  pipeline/orchestrator │
 └──────────────────────────────────────────────────────────────┘
         ↓
-CRYPTOGRAPHIC AUDIT CHAIN (Ed25519 + Merkle Tree)
+ROOTFILE AUDIT CHAIN (SHA-256 JSONL HASH CHAIN)
 ```
 
 ### Stage Details
@@ -349,7 +349,7 @@ CRYPTOGRAPHIC AUDIT CHAIN (Ed25519 + Merkle Tree)
 | 15. SCHEDULER_COLLAPSE | Issue ExecutionToken or REFUSE; **circuit breaker** wraps this call |
 | 16. EXECUTION | Submit to shadow/paper/live broker via ExecutionToken |
 | 17. RECONCILIATION | PnL divergence: \|predicted − realized\| / max(\|predicted\|, 1) |
-| 18. EVIDENCE_EMISSION | Ed25519 sign + Merkle-chain the evidence record |
+| 18. EVIDENCE_EMISSION | Append a canonical SHA-256 hash-chained evidence record |
 | 19. WEIGHT_UPDATE | PPO reward + backward law: w_new ← Π_simplex(w_old + η·J) |
 | 20. COMPLETED | Update state, log metrics, prepare for next cycle |
 
@@ -411,7 +411,7 @@ PHYSICS CORE (taep/)
 ├── Chaos: 3-body → Lyapunov → entropy
 ├── Constraints: admissibility projectors Π
 ├── Scheduler: collapse authority + ExecutionToken
-└── Evidence: Ed25519 signatures + Merkle tree
+└── Evidence: SHA-256 runtime hash chain; optional legacy Ed25519/Merkle bundles
 
 TRADING ENGINE (trading/)
 ├── Geometry: ϕ → metric → Γ → K → regime

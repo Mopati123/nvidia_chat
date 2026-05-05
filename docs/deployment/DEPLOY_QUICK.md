@@ -74,7 +74,7 @@ heroku ps:scale worker=1
 
 - **Refusal-first**: Default non-execution
 - **Scheduler sovereignty**: No entity can force collapse
-- **Deterministic evidence**: Merkle + Ed25519 signatures
+- **Deterministic evidence**: SHA-256 runtime hash chain; optional Ed25519/Merkle evidence bundles
 - **No sideways imports**: All coupling via OperatorMeta
 
 ## Support

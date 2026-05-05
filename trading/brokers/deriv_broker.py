@@ -398,6 +398,46 @@ class DerivBroker:
             return response['portfolio'].get('contracts', [])
         
         return []
+
+    def get_contract_status(self, contract_id: int | str) -> Optional[Dict]:
+        """Get the current or final status for one Deriv contract."""
+        if not self.authorized:
+            return None
+
+        try:
+            contract_id_int = int(contract_id)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid contract_id '{contract_id}': {e}")
+            return None
+
+        response = self._send_request({
+            "proposal_open_contract": 1,
+            "contract_id": contract_id_int,
+            "subscribe": 0,
+        })
+
+        if response and 'proposal_open_contract' in response:
+            return response['proposal_open_contract']
+
+        return None
+
+    def get_profit_table(self, *, limit: int = 500, offset: int = 0,
+                         sort: str = "DESC") -> List[Dict]:
+        """Get closed contract profit/loss history for the authorized account."""
+        if not self.authorized:
+            return []
+
+        response = self._send_request({
+            "profit_table": 1,
+            "limit": max(1, min(int(limit), 500)),
+            "offset": max(0, int(offset)),
+            "sort": sort,
+        })
+
+        if response and 'profit_table' in response:
+            return response['profit_table'].get('transactions', [])
+
+        return []
     
     def sell_contract(self, contract_id: int, price: float, *, token: Optional[Any] = None) -> Optional[Dict]:
         """Sell/close a contract early"""
