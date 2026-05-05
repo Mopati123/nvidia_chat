@@ -462,7 +462,7 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                         ).start()
                 elif live_mode and live_broker == "deriv":
                     logger.info(
-                        "Deriv live-demo PPO feedback deferred until Deriv contract settlement is implemented"
+                        "Deriv live-demo PPO feedback deferred until contract settlement after close"
                     )
                 else:
                     # Paper mode: fire immediately with predicted PnL
