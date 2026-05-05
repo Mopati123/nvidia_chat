@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from argparse import Namespace
 from types import SimpleNamespace
 
 import pytest
 
 from scripts.trading.run_demo_trading import (
+    SessionStats,
+    build_pipeline_handler,
     deriv_live_preflight_blocker,
     deriv_symbol_for,
     live_demo_argument_blocker,
@@ -223,3 +226,88 @@ def test_deriv_stage16_order_construction_is_deterministic(monkeypatch, directio
     assert order.duration == 15
     assert order.duration_unit == "m"
     assert context.execution_result["broker"] == "deriv"
+
+
+def test_deriv_canary_persists_ppo_pending_before_stop(monkeypatch, tmp_path):
+    class ReadyAccumulator:
+        def add(self, price, ts):
+            pass
+
+        def ready(self):
+            return True
+
+        def mark_run(self):
+            pass
+
+        def to_ohlcv(self):
+            return {
+                "open": [1.1],
+                "high": [1.1],
+                "low": [1.1],
+                "close": [1.1],
+                "volume": [1],
+                "time": [1.0],
+            }
+
+    class FakeAgent:
+        def save(self, path):
+            tmp_path.joinpath("agent_saved").write_text(path, encoding="utf-8")
+
+    class FakePPOHook:
+        def __init__(self):
+            self.agent = FakeAgent()
+            self.pending = {}
+
+        def on_trade_executed(self, context):
+            self.pending[str(context.trade_id)] = {"state": [0.0], "action_idx": 0}
+
+        def export_pending(self):
+            return self.pending
+
+        def pending_count(self):
+            return len(self.pending)
+
+    context = SimpleNamespace(
+        collapse_decision="AUTHORIZED",
+        proposal={
+            "direction": "buy",
+            "entry": 1.1,
+            "stop": 1.0,
+            "target": 1.2,
+            "size": 0.01,
+            "predicted_pnl": 0.2,
+        },
+        execution_result={"order_id": "313660691488", "broker": "deriv"},
+        selected_path={},
+        action_weights={},
+        memory_embedding=None,
+    )
+    orch = SimpleNamespace(execute=lambda raw_data, symbol, source: context)
+    pending_path = tmp_path / "ppo_pending.json"
+    checkpoint_path = tmp_path / "ppo.pt"
+    kill_calls = []
+
+    def fake_kill(pid, sig):
+        kill_calls.append((pid, sig))
+        pending = json.loads(pending_path.read_text(encoding="utf-8"))
+        assert "313660691488" in pending
+
+    monkeypatch.setattr("scripts.trading.run_demo_trading.os.kill", fake_kill)
+
+    handler = build_pipeline_handler(
+        orch,
+        FakePPOHook(),
+        ReadyAccumulator(),
+        SessionStats(),
+        "EURUSD",
+        "deriv",
+        live_mode=True,
+        live_broker="deriv",
+        deriv_broker_ref=SimpleNamespace(get_active_contracts=lambda: []),
+        ppo_checkpoint_path=checkpoint_path,
+        ppo_pending_path=pending_path,
+    )
+
+    handler(("deriv", {"price": 1.1}))
+
+    assert kill_calls
