@@ -19,8 +19,9 @@ def _args(**overrides) -> Namespace:
     values = {
         "live_demo": True,
         "mode": "deriv",
+        "symbol": "EURUSD",
         "deriv_stake": 1.0,
-        "deriv_duration": 5,
+        "deriv_duration": 15,
         "deriv_duration_unit": "m",
         "max_contracts": 1,
     }
@@ -31,15 +32,33 @@ def _args(**overrides) -> Namespace:
 class _FakeDeriv:
     authorized = True
 
-    def __init__(self, *, loginid: str = "VRTC123", active_contracts=None):
+    def __init__(self, *, loginid: str = "VRTC123", active_contracts=None,
+                 available_types=None, quoted_types=None):
         self.loginid = loginid
         self.active_contracts = list(active_contracts or [])
+        self.available_types = set(available_types or ("CALL", "PUT"))
+        self.quoted_types = set(quoted_types or ("CALL", "PUT"))
+        self.proposal_orders = []
 
     def get_account_info(self):
         return {"loginid": self.loginid, "demo": self.loginid.startswith("VRTC")}
 
     def get_active_contracts(self):
         return self.active_contracts
+
+    def get_contracts_for(self, symbol):
+        return {
+            "available": [
+                {"contract_type": contract_type, "underlying_symbol": symbol}
+                for contract_type in self.available_types
+            ]
+        }
+
+    def get_proposal_quote(self, order):
+        self.proposal_orders.append(order)
+        if order.contract_type in self.quoted_types:
+            return {"id": f"proposal-{order.contract_type}", "ask_price": order.amount}
+        return None
 
 
 def test_live_demo_both_mode_refuses():
@@ -67,7 +86,7 @@ def test_deriv_live_demo_active_contracts_block_startup():
     ("overrides", "expected"),
     [
         ({"deriv_stake": 1.01}, "Deriv stake cap exceeded"),
-        ({"deriv_duration": 6}, "Deriv duration cap exceeded"),
+        ({"deriv_duration": 16}, "Deriv duration cap exceeded"),
         ({"max_contracts": 2}, "Deriv live-demo max-contracts must be 1"),
     ],
 )
@@ -76,6 +95,35 @@ def test_deriv_live_demo_caps_reject_unsafe_values(overrides, expected):
 
     assert blocker is not None
     assert expected in blocker
+
+
+def test_deriv_live_demo_preflight_requires_both_call_and_put_quotes():
+    fake = _FakeDeriv(quoted_types={"CALL"})
+
+    blocker = deriv_live_preflight_blocker(fake, _args())
+
+    assert blocker == "Deriv no-buy proposal quote unavailable for frxEURUSD 15m: PUT"
+    assert [order.contract_type for order in fake.proposal_orders] == ["CALL", "PUT"]
+
+
+def test_deriv_live_demo_preflight_accepts_offer_aware_15m_quotes():
+    fake = _FakeDeriv()
+
+    blocker = deriv_live_preflight_blocker(fake, _args())
+
+    assert blocker is None
+    assert [order.contract_type for order in fake.proposal_orders] == ["CALL", "PUT"]
+    assert {order.duration for order in fake.proposal_orders} == {15}
+    assert {order.duration_unit for order in fake.proposal_orders} == {"m"}
+
+
+def test_deriv_live_demo_preflight_blocks_missing_contract_type():
+    blocker = deriv_live_preflight_blocker(
+        _FakeDeriv(available_types={"CALL"}),
+        _args(),
+    )
+
+    assert blocker == "Deriv contract type(s) unavailable for frxEURUSD: PUT"
 
 
 def _orch() -> PipelineOrchestrator:
@@ -148,7 +196,7 @@ def test_deriv_stage16_order_construction_is_deterministic(monkeypatch, directio
     orch.live_broker_mode = "deriv"
     orch.deriv_live_config = {
         "stake": 1.0,
-        "duration": 5,
+        "duration": 15,
         "duration_unit": "m",
         "max_contracts": 1,
     }
@@ -172,6 +220,6 @@ def test_deriv_stage16_order_construction_is_deterministic(monkeypatch, directio
     assert order.contract_type == contract_type
     assert order.symbol == deriv_symbol_for("EURUSD")
     assert order.amount == 1.0
-    assert order.duration == 5
+    assert order.duration == 15
     assert order.duration_unit == "m"
     assert context.execution_result["broker"] == "deriv"

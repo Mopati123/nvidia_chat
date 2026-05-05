@@ -94,9 +94,10 @@ def _load_ppo_state(ppo_agent, ppo_hook, checkpoint_path: pathlib.Path,
 
 
 DERIV_LIVE_MAX_STAKE = 1.0
-DERIV_LIVE_MAX_DURATION = 5
+DERIV_LIVE_MAX_DURATION = 15
 DERIV_LIVE_DURATION_UNIT = "m"
 DERIV_LIVE_MAX_CONTRACTS = 1
+DERIV_LIVE_REQUIRED_CONTRACT_TYPES = ("CALL", "PUT")
 
 
 def deriv_symbol_for(symbol: str) -> str:
@@ -154,6 +155,48 @@ def deriv_live_preflight_blocker(deriv_broker_ref: Any, args: argparse.Namespace
             for c in active_contracts
         )
         return f"active Deriv contract(s) already open: {contract_ids}"
+
+    from trading.brokers.deriv_broker import DerivOrder
+
+    symbol = deriv_symbol_for(getattr(args, "symbol", "EURUSD"))
+    contracts_for = (
+        deriv_broker_ref.get_contracts_for(symbol)
+        if hasattr(deriv_broker_ref, "get_contracts_for")
+        else {}
+    ) or {}
+    available_contracts = contracts_for.get("available") or []
+    available_types = {
+        str(item.get("contract_type", ""))
+        for item in available_contracts
+        if isinstance(item, dict)
+    }
+    if available_types and not set(DERIV_LIVE_REQUIRED_CONTRACT_TYPES).issubset(available_types):
+        missing_types = sorted(set(DERIV_LIVE_REQUIRED_CONTRACT_TYPES) - available_types)
+        return f"Deriv contract type(s) unavailable for {symbol}: {', '.join(missing_types)}"
+
+    if not hasattr(deriv_broker_ref, "get_proposal_quote"):
+        return "Deriv broker cannot verify no-buy proposal quotes"
+
+    missing_quotes = []
+    for contract_type in DERIV_LIVE_REQUIRED_CONTRACT_TYPES:
+        quote = deriv_broker_ref.get_proposal_quote(
+            DerivOrder(
+                symbol=symbol,
+                contract_type=contract_type,
+                amount=float(args.deriv_stake),
+                duration=int(args.deriv_duration),
+                duration_unit=str(args.deriv_duration_unit),
+            )
+        )
+        if not quote:
+            missing_quotes.append(contract_type)
+
+    if missing_quotes:
+        return (
+            f"Deriv no-buy proposal quote unavailable for {symbol} "
+            f"{args.deriv_duration}{args.deriv_duration_unit}: {', '.join(missing_quotes)}"
+        )
+
     return None
 
 
@@ -506,8 +549,8 @@ def main():
                         help="Session equity drawdown limit in USD before auto-stop (default: $20)")
     parser.add_argument("--deriv-stake", type=float, default=1.0,
                         help="Deriv live-demo stake in USD (hard cap: $1.00)")
-    parser.add_argument("--deriv-duration", type=int, default=5,
-                        help="Deriv live-demo contract duration (hard cap: 5 minutes)")
+    parser.add_argument("--deriv-duration", type=int, default=15,
+                        help="Deriv live-demo contract duration (hard cap: 15 minutes)")
     parser.add_argument("--deriv-duration-unit", default="m", choices=["m"],
                         help="Deriv live-demo duration unit (only minutes are allowed)")
     parser.add_argument("--max-contracts", type=int, default=1,
