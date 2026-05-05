@@ -145,6 +145,13 @@ class PipelineOrchestrator:
         self.use_microstructure = use_microstructure
         self.use_weight_learning = use_weight_learning
         self._paper_mode: bool = True  # set False for live broker execution
+        self.live_broker_mode: Optional[str] = None
+        self.deriv_live_config: Dict[str, Any] = {
+            "stake": 1.0,
+            "duration": 5,
+            "duration_unit": "m",
+            "max_contracts": 1,
+        }
 
         # Initialize scheduler
         if scheduler is None:
@@ -1068,8 +1075,15 @@ class PipelineOrchestrator:
             )
             return {'executed': True, 'order': context.execution_result}
 
-        # Live mode: place market order directly on MT5 (Deriv fallback not yet supported)
-        from trading.brokers.mt5_broker import MT5Broker, MT5Order, mt5_broker as _mt5
+        # Live mode: route through the explicitly selected demo broker.
+        live_broker_mode = getattr(self, 'live_broker_mode', None)
+        MT5Order = None
+        _mt5 = None
+        if live_broker_mode in (None, 'mt5'):
+            try:
+                from trading.brokers.mt5_broker import MT5Order, mt5_broker as _mt5
+            except Exception as exc:
+                logger.warning("Stage 16: MT5 broker unavailable: %s", exc)
         from trading.brokers.deriv_broker import DerivBroker, DerivOrder, deriv_broker as _deriv
 
         direction = context.proposal.get('direction', 'buy')
@@ -1079,9 +1093,12 @@ class PipelineOrchestrator:
         target    = context.proposal.get('target')
 
         result = None
+        broker_name = None
+        attempted_broker = False
 
         # --- MT5 ---
-        if _mt5.connected:
+        if live_broker_mode in (None, 'mt5') and _mt5 is not None and _mt5.connected:
+            attempted_broker = True
             mt5_order = MT5Order(
                 symbol=context.symbol,
                 order_type=direction,
@@ -1092,6 +1109,7 @@ class PipelineOrchestrator:
             )
             result = _mt5.place_order(mt5_order, token=context.execution_token)
             if result:
+                broker_name = "mt5"
                 logger.info(
                     "Stage 16: MT5 order placed ticket=%s %s %s size=%.2f",
                     result.get('ticket'), direction.upper(), context.symbol, size
@@ -1105,40 +1123,45 @@ class PipelineOrchestrator:
                     ticket=result.get('ticket'),
                 )
 
-        # --- Deriv fallback ---
-        if result is None and _deriv.connected:
+        # --- Deriv ---
+        if result is None and live_broker_mode in (None, 'deriv') and _deriv.connected:
+            attempted_broker = True
+            deriv_config = getattr(self, 'deriv_live_config', {}) or {}
             contract_type = 'CALL' if direction == 'buy' else 'PUT'
             d_order = DerivOrder(
                 symbol='frx' + context.symbol if not context.symbol.startswith('frx') else context.symbol,
                 contract_type=contract_type,
-                duration=5,
-                duration_unit='m',
-                amount=max(round(size * 100, 2), 1.0),
+                duration=int(deriv_config.get('duration', 5)),
+                duration_unit=str(deriv_config.get('duration_unit', 'm')),
+                amount=float(deriv_config.get('stake', 1.0)),
             )
             result = _deriv.place_contract(d_order, token=context.execution_token)
             if result:
+                broker_name = "deriv"
                 logger.info(
-                    "Stage 16: Deriv contract placed %s %s size=%.2f",
-                    contract_type, context.symbol, size
+                    "Stage 16: Deriv contract placed %s %s stake=$%.2f duration=%d%s",
+                    contract_type, d_order.symbol, d_order.amount, d_order.duration, d_order.duration_unit
                 )
                 self._audit_gate(
                     "stage16_execution",
                     "passed",
                     broker="deriv",
                     contract_id=result.get('contract_id'),
-                    size=size,
+                    stake=d_order.amount,
                     symbol=context.symbol,
                 )
 
         if result is None:
-            logger.error("Stage 16: no broker available for live execution — order not placed")
-            self._audit_gate("stage16_execution", "failed", reason="no_broker", symbol=context.symbol)
-            return {'executed': False, 'reason': 'no_broker'}
+            reason = 'broker_refusal' if attempted_broker else 'no_broker'
+            logger.error("Stage 16: live execution failed - %s", reason)
+            self._audit_gate("stage16_execution", "failed", reason=reason, symbol=context.symbol)
+            return {'executed': False, 'reason': reason}
 
         context.execution_result = {
             'order_id':    str(result.get('ticket') or result.get('contract_id') or f'ord_{int(time.time())}'),
             'symbol':      context.symbol,
-            'entry_price': float(result.get('price', entry)),
+            'entry_price': float(result.get('price', entry) if broker_name == "mt5" else entry),
+            'broker':      broker_name,
             'status':      'filled',
             'realized_pnl': 0.0,
         }
@@ -1273,7 +1296,7 @@ class PipelineOrchestrator:
             "passed" if result['updated'] else "flagged",
             reason=result.get('reason'),
             reward=f"{result.get('reward', 0.0):.4f}",
-            status=context.reconciliation_status,
+            reconciliation_status=context.reconciliation_status,
             symbol=context.symbol,
         )
         

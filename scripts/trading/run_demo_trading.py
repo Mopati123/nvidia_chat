@@ -92,6 +92,77 @@ def _load_ppo_state(ppo_agent, ppo_hook, checkpoint_path: pathlib.Path,
         except Exception as exc:
             logger.warning("PPO pending state load failed (%s): %s", pending_path, exc)
 
+
+DERIV_LIVE_MAX_STAKE = 1.0
+DERIV_LIVE_MAX_DURATION = 5
+DERIV_LIVE_DURATION_UNIT = "m"
+DERIV_LIVE_MAX_CONTRACTS = 1
+
+
+def deriv_symbol_for(symbol: str) -> str:
+    """Map runner symbols to Deriv forex symbols."""
+    return symbol if symbol.startswith("frx") else f"frx{symbol}"
+
+
+def is_deriv_demo_account(account_info: Optional[Dict[str, Any]]) -> bool:
+    """Deriv live-demo execution is allowed only on virtual VRTC accounts."""
+    if not account_info:
+        return False
+    return str(account_info.get("loginid", "")).startswith("VRTC")
+
+
+def live_demo_argument_blocker(args: argparse.Namespace) -> Optional[str]:
+    """Return a refusal reason when live-demo arguments exceed safety rails."""
+    if not getattr(args, "live_demo", False):
+        return None
+    if args.mode not in ("mt5", "deriv"):
+        return "live-demo supports exactly --mode mt5 or --mode deriv"
+    if args.mode != "deriv":
+        return None
+    if args.deriv_stake <= 0:
+        return "Deriv stake must be positive"
+    if args.deriv_stake > DERIV_LIVE_MAX_STAKE:
+        return f"Deriv stake cap exceeded: {args.deriv_stake:.2f} > {DERIV_LIVE_MAX_STAKE:.2f}"
+    if args.deriv_duration_unit != DERIV_LIVE_DURATION_UNIT:
+        return "Deriv live-demo duration unit must be m"
+    if args.deriv_duration <= 0:
+        return "Deriv duration must be positive"
+    if args.deriv_duration > DERIV_LIVE_MAX_DURATION:
+        return f"Deriv duration cap exceeded: {args.deriv_duration}{args.deriv_duration_unit} > {DERIV_LIVE_MAX_DURATION}m"
+    if args.max_contracts != DERIV_LIVE_MAX_CONTRACTS:
+        return "Deriv live-demo max-contracts must be 1"
+    return None
+
+
+def deriv_live_preflight_blocker(deriv_broker_ref: Any, args: argparse.Namespace) -> Optional[str]:
+    """Return a refusal reason when the connected Deriv account is not canary-safe."""
+    blocker = live_demo_argument_blocker(args)
+    if blocker:
+        return blocker
+    if deriv_broker_ref is None or not getattr(deriv_broker_ref, "authorized", False):
+        return "Deriv broker is not authorized"
+
+    account_info = deriv_broker_ref.get_account_info() or {}
+    if not is_deriv_demo_account(account_info):
+        login = account_info.get("loginid", "unknown")
+        return f"Deriv account is not a VRTC demo account: {login}"
+
+    active_contracts = deriv_broker_ref.get_active_contracts()
+    if active_contracts:
+        contract_ids = ", ".join(
+            str(c.get("contract_id", "?") if isinstance(c, dict) else getattr(c, "contract_id", "?"))
+            for c in active_contracts
+        )
+        return f"active Deriv contract(s) already open: {contract_ids}"
+    return None
+
+
+def sync_deriv_singleton(connected_broker: Any) -> None:
+    """Point Stage 16's Deriv singleton import at the already-connected broker."""
+    import trading.brokers.deriv_broker as deriv_module
+
+    deriv_module.deriv_broker = connected_broker
+
 # ---------------------------------------------------------------------------
 # Tick → OHLCV accumulator
 # ---------------------------------------------------------------------------
@@ -213,14 +284,18 @@ class SessionStats:
 def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                             stats: SessionStats, symbol: str, mode: str,
                             csv_writer=None, csv_file=None,
-                            live_mode: bool = False, mt5_broker_ref=None,
+                            live_mode: bool = False, live_broker: str = "",
+                            mt5_broker_ref=None, deriv_broker_ref=None,
                             start_equity: float = 0.0, max_loss: float = 20.0,
                             trade_cooldown: float = 300.0,
                             ppo_checkpoint_path: Optional[pathlib.Path] = None,
                             ppo_pending_path: Optional[pathlib.Path] = None):
     """Returns the function passed to AsyncTickLoop as pipeline_fn."""
-    import MetaTrader5 as _mt5_api
-    from trading.brokers.mt5_broker import mt5_position_tracker as _tracker
+    _mt5_api = None
+    _tracker = None
+    if live_mode and live_broker == "mt5":
+        import MetaTrader5 as _mt5_api
+        from trading.brokers.mt5_broker import mt5_position_tracker as _tracker
 
     _last_trade_time = [0.0]  # mutable so inner function can update it
 
@@ -261,10 +336,20 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
         if live_mode:
             if (time.time() - _last_trade_time[0]) < trade_cooldown:
                 return  # within cooldown window
-            open_positions = _mt5_api.positions_get()
-            if open_positions and len(open_positions) > 0:
-                logger.debug("Skipping pipeline — %d position(s) already open", len(open_positions))
-                return
+            if live_broker == "deriv" and deriv_broker_ref is not None:
+                active_contracts = deriv_broker_ref.get_active_contracts()
+                if active_contracts:
+                    logger.info(
+                        "Deriv live-demo gate: %d active contract(s); stopping canary",
+                        len(active_contracts),
+                    )
+                    os.kill(os.getpid(), signal.SIGINT)
+                    return
+            if live_broker == "mt5" and _mt5_api is not None:
+                open_positions = _mt5_api.positions_get()
+                if open_positions and len(open_positions) > 0:
+                    logger.debug("Skipping pipeline — %d position(s) already open", len(open_positions))
+                    return
 
         accumulator.mark_run()
         raw_data = accumulator.to_ohlcv()
@@ -311,6 +396,12 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
             # Record trade time for cooldown
             if live_mode and hasattr(ctx, "execution_result") and ctx.execution_result:
                 _last_trade_time[0] = time.time()
+                if live_broker == "deriv":
+                    logger.info(
+                        "Deriv live-demo canary observed contract %s; stopping after one execution",
+                        ctx.execution_result.get("order_id", "unknown"),
+                    )
+                    os.kill(os.getpid(), signal.SIGINT)
 
             # Register position with MT5 close tracker — real PnL feeds PPO on close
             if ppo_hook and hasattr(ctx, "execution_result") and ctx.execution_result:
@@ -359,7 +450,7 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                         realized,
                     )
 
-                if live_mode and mt5_broker_ref is not None:
+                if live_mode and live_broker == "mt5" and mt5_broker_ref is not None and _tracker is not None:
                     try:
                         ticket_int = int(ctx.execution_result.get("order_id", ""))
                         _tracker.track(ticket_int, trade_id, _ppo_callback,
@@ -369,6 +460,10 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                         _threading.Thread(
                             target=_ppo_callback, args=(trade_id, predicted), daemon=True
                         ).start()
+                elif live_mode and live_broker == "deriv":
+                    logger.info(
+                        "Deriv live-demo PPO feedback deferred until Deriv contract settlement is implemented"
+                    )
                 else:
                     # Paper mode: fire immediately with predicted PnL
                     _threading.Thread(
@@ -409,21 +504,37 @@ def main():
                         help="Position size in lots for live-demo mode (default: 0.01)")
     parser.add_argument("--max-loss", type=float, default=20.0,
                         help="Session equity drawdown limit in USD before auto-stop (default: $20)")
+    parser.add_argument("--deriv-stake", type=float, default=1.0,
+                        help="Deriv live-demo stake in USD (hard cap: $1.00)")
+    parser.add_argument("--deriv-duration", type=int, default=5,
+                        help="Deriv live-demo contract duration (hard cap: 5 minutes)")
+    parser.add_argument("--deriv-duration-unit", default="m", choices=["m"],
+                        help="Deriv live-demo duration unit (only minutes are allowed)")
+    parser.add_argument("--max-contracts", type=int, default=1,
+                        help="Deriv live-demo active contract limit (must be 1)")
     parser.add_argument("--ppo-checkpoint", default="data/models/ppo_live_demo.pt",
                         help="Durable PPO checkpoint for demo feedback")
     parser.add_argument("--ppo-pending", default="data/models/ppo_live_demo_pending.json",
                         help="Pending PPO trade-entry states for restart-safe settlement")
     args = parser.parse_args()
 
-    if args.live_demo and args.mode != "mt5":
-        logger.error("Live-demo forward tests are MT5-only. Use --mode mt5.")
+    blocker = live_demo_argument_blocker(args)
+    if blocker:
+        logger.error("Live-demo refused: %s", blocker)
         sys.exit(2)
 
     print("=" * 60)
     print("  ApexQuantumICT — Live Demo Trading")
     print(f"  Symbol: {args.symbol}  |  Mode: {args.mode.upper()}")
     if args.live_demo:
-        print(f"  LIVE DEMO: real orders | lot={args.lot_size} | max-loss=${args.max_loss}")
+        if args.mode == "deriv":
+            print(
+                "  LIVE DEMO: Deriv contract canary | "
+                f"stake=${args.deriv_stake:.2f} | duration={args.deriv_duration}{args.deriv_duration_unit} | "
+                f"max-contracts={args.max_contracts}"
+            )
+        else:
+            print(f"  LIVE DEMO: real orders | lot={args.lot_size} | max-loss=${args.max_loss}")
     print(f"  Started: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print("=" * 60)
 
@@ -478,7 +589,7 @@ def main():
             if deriv_broker.connect():
                 deriv_ok = True
                 # Deriv symbol for forex: frxEURUSD, frxGBPUSD, etc.
-                deriv_symbol = "frx" + args.symbol if not args.symbol.startswith("frx") else args.symbol
+                deriv_symbol = deriv_symbol_for(args.symbol)
                 deriv_broker.subscribe_ticks(deriv_symbol)
                 logger.info("Deriv demo connected — subscribed to %s", deriv_symbol)
             else:
@@ -506,22 +617,31 @@ def main():
     if args.mode == "paper":
         logger.info("Running in PAPER mode — no broker connection required")
 
-    if args.mode in ("deriv", "mt5", "both") and not deriv_ok and not mt5_ok:
+    if args.live_demo and args.mode == "deriv" and not deriv_ok:
+        logger.error("Live-demo refused: Deriv broker is not connected")
+        sys.exit(2)
+    if args.live_demo and args.mode == "mt5" and not mt5_ok:
+        logger.error("Live-demo refused: MT5 broker is not connected")
+        sys.exit(2)
+
+    if not args.live_demo and args.mode in ("deriv", "mt5", "both") and not deriv_ok and not mt5_ok:
         logger.warning(
             "No broker connected. Falling back to paper mode with simulated ticks.\n"
             "Set DERIV_API_TOKEN / MT5_ACCOUNT_ID env vars to connect to real demo accounts."
         )
         args.mode = "paper"
 
-    # Set paper_mode: live-demo + MT5 connected = real orders; everything else = paper
-    live_mode = args.live_demo and mt5_ok
+    # Set paper_mode: live-demo + one connected broker = real demo execution; everything else = paper
+    live_mode = args.live_demo and ((args.mode == "mt5" and mt5_ok) or (args.mode == "deriv" and deriv_ok))
+    live_broker = args.mode if live_mode else ""
     orch._paper_mode = not live_mode
+    orch.live_broker_mode = live_broker or None
     logger.info("Pipeline paper_mode=%s%s", orch._paper_mode,
                 " (LIVE DEMO — real orders)" if live_mode else "")
 
     # Live-demo setup: sync singleton so Stage 16 can call place_order, capture start equity
     start_equity: float = 0.0
-    if live_mode:
+    if live_mode and live_broker == "mt5":
         from trading.brokers.mt5_broker import mt5_broker as _mt5_singleton
         import MetaTrader5 as _mt5_api
 
@@ -549,6 +669,28 @@ def main():
         start_equity = account_info.get("equity", 0.0)
         logger.info("LIVE DEMO ready — lot=%.2f | start equity=$%.2f | session loss limit=$%.0f",
                     args.lot_size, start_equity, args.max_loss)
+    elif live_mode and live_broker == "deriv":
+        blocker = deriv_live_preflight_blocker(deriv_broker, args)
+        if blocker:
+            logger.error("Deriv live-demo refused: %s", blocker)
+            sys.exit(2)
+
+        sync_deriv_singleton(deriv_broker)
+        orch.deriv_live_config = {
+            "stake": args.deriv_stake,
+            "duration": args.deriv_duration,
+            "duration_unit": args.deriv_duration_unit,
+            "max_contracts": args.max_contracts,
+        }
+        account_info = deriv_broker.get_account_info() or {}
+        logger.info(
+            "DERIV LIVE DEMO ready - login=%s | stake=$%.2f | duration=%d%s | max-contracts=%d",
+            account_info.get("loginid"),
+            args.deriv_stake,
+            args.deriv_duration,
+            args.deriv_duration_unit,
+            args.max_contracts,
+        )
 
     # ------------------------------------------------------------------
     # 4. CSV trade log + tick accumulator + pipeline handler
@@ -572,7 +714,9 @@ def main():
     pipeline_fn = build_pipeline_handler(
         orch, ppo_hook, accumulator, stats, args.symbol, args.mode,
         csv_writer=_writer, csv_file=_csv_file,
-        live_mode=live_mode, mt5_broker_ref=mt5_broker if live_mode else None,
+        live_mode=live_mode, live_broker=live_broker,
+        mt5_broker_ref=mt5_broker if live_broker == "mt5" else None,
+        deriv_broker_ref=deriv_broker if live_broker == "deriv" else None,
         start_equity=start_equity, max_loss=args.max_loss,
         trade_cooldown=300.0,  # 5 min minimum between trades in live mode
         ppo_checkpoint_path=ppo_checkpoint_path if ppo_hook else None,
