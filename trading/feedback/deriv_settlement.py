@@ -158,7 +158,6 @@ def _realized_pnl(contract: Any) -> Optional[float]:
     sell_price = _maybe_float(
         _contract_attr(contract, "sell_price")
         or _contract_attr(contract, "bid_price")
-        or _contract_attr(contract, "payout")
     )
     buy_price = _maybe_float(_contract_attr(contract, "buy_price"))
     if sell_price is not None and buy_price is not None:
@@ -275,7 +274,6 @@ def settle_deriv_contract(
     base.sell_price = _maybe_float(
         _contract_attr(settled_contract, "sell_price")
         or _contract_attr(settled_contract, "bid_price")
-        or _contract_attr(settled_contract, "payout")
     )
     base.realized_pnl = realized
     base.close_reason = _close_reason(settled_contract)

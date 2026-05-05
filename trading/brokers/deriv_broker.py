@@ -443,7 +443,6 @@ class DerivBroker:
         response = self._send_request({
             "proposal_open_contract": 1,
             "contract_id": contract_id_int,
-            "subscribe": 0,
         })
 
         if response and 'proposal_open_contract' in response:

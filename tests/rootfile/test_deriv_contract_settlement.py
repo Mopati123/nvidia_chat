@@ -7,6 +7,7 @@ from pathlib import Path
 
 from data_core.ml.evidence_dataset import read_refusal_risk_dataset
 from tachyonic_chain.audit_log import verify_execution_evidence_chain
+from trading.brokers.deriv_broker import DerivBroker
 from trading.feedback.deriv_settlement import (
     DerivContractTrade,
     load_deriv_contract_trades,
@@ -79,6 +80,25 @@ def test_load_deriv_contract_trades_skips_paper_and_mt5_rows(tmp_path: Path):
     assert trades[0].source == "deriv"
 
 
+def test_deriv_contract_status_request_is_read_only_without_invalid_subscribe():
+    class FakeDerivBroker(DerivBroker):
+        def __init__(self):
+            self.connected = True
+            self.authorized = True
+            self.sent = None
+
+        def _send_request(self, request):
+            self.sent = request
+            return {"proposal_open_contract": {"contract_id": 777, "status": "open"}}
+
+    broker = FakeDerivBroker()
+
+    status = broker.get_contract_status("777")
+
+    assert status == {"contract_id": 777, "status": "open"}
+    assert broker.sent == {"proposal_open_contract": 1, "contract_id": 777}
+
+
 def test_deriv_settlement_parser_reports_open_contract():
     record = settle_deriv_contract(_trade("777"), {"777"}, {}, [])
 
@@ -125,6 +145,26 @@ def test_deriv_settlement_parser_handles_closed_loss_from_profit_table_fallback(
     assert record.close_reason == "lost"
     assert record.contract_type == "PUT"
     assert record.realized_pnl == -1.0
+
+
+def test_deriv_settlement_uses_profit_without_treating_payout_as_sell_price():
+    record = settle_deriv_contract(
+        _trade("999"),
+        set(),
+        {},
+        [{
+            "contract_id": "999",
+            "contract_type": "CALL",
+            "status": "lost",
+            "buy_price": "1.00",
+            "payout": "1.41",
+            "profit": "-1.00",
+        }],
+    )
+
+    assert record.status == "closed"
+    assert record.realized_pnl == -1.0
+    assert record.sell_price is None
 
 
 def test_settle_deriv_contracts_skips_already_settled_contract(tmp_path: Path):
