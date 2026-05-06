@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from tachyonic_chain.audit_log import append_execution_evidence
+from trading.feedback.falsification import append_falsification_evidence, score_decision
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ class SettlementRecord:
     close_reason: Optional[str] = None
     closed_at: Optional[float] = None
     ppo_feedback_status: str = "not_attempted"
+    falsification_status: str = "not_scored"
+    falsification_hash: Optional[str] = None
     evidence_hash: Optional[str] = None
 
 
@@ -384,6 +387,23 @@ def settle_demo_trades(
                     ppo_pending_path,
                 )
                 record.evidence_hash = append_settlement_evidence(record, evidence_log_path)
+                falsification = score_decision(
+                    "AUTHORIZED",
+                    realized_pnl=record.realized_pnl,
+                    predicted_pnl=record.predicted_pnl,
+                    symbol=record.symbol,
+                    broker="mt5",
+                    reference_id=record.ticket,
+                    metadata={
+                        "close_reason": record.close_reason,
+                        "source": record.source,
+                    },
+                )
+                record.falsification_status = falsification.classification
+                record.falsification_hash = append_falsification_evidence(
+                    falsification,
+                    evidence_log_path,
+                )
                 append_settlement_record(record, ledger_path)
                 existing.add(record.ticket)
                 new_closed += 1

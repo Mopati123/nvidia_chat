@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from tachyonic_chain.audit_log import append_execution_evidence
 from trading.feedback.demo_settlement import _build_ml_artifacts
+from trading.feedback.falsification import append_falsification_evidence, score_decision
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,8 @@ class DerivSettlementRecord:
     close_reason: Optional[str] = None
     closed_at: Optional[float] = None
     ppo_feedback_status: str = "not_attempted"
+    falsification_status: str = "not_scored"
+    falsification_hash: Optional[str] = None
     evidence_hash: Optional[str] = None
 
 
@@ -455,6 +458,24 @@ def settle_deriv_contracts(
                     ppo_pending_path,
                 )
                 record.evidence_hash = append_deriv_settlement_evidence(record, evidence_log_path)
+                falsification = score_decision(
+                    "AUTHORIZED",
+                    realized_pnl=record.realized_pnl,
+                    predicted_pnl=record.predicted_pnl,
+                    symbol=record.symbol,
+                    broker="deriv",
+                    reference_id=record.contract_id,
+                    metadata={
+                        "close_reason": record.close_reason,
+                        "contract_type": record.contract_type,
+                        "source": record.source,
+                    },
+                )
+                record.falsification_status = falsification.classification
+                record.falsification_hash = append_falsification_evidence(
+                    falsification,
+                    evidence_log_path,
+                )
                 append_deriv_settlement_record(record, ledger_path)
                 existing.add(record.contract_id)
                 new_closed += 1

@@ -6,6 +6,8 @@ ApexQuantumICT treats financial markets as a curved Riemannian manifold and sele
 
 The rootfile-first overlay makes that contract explicit without breaking the existing engine. Current modules stay in place, while canonical namespaces describe the architecture in first-order layers: state preparation, proposal generation, authorization, execution, evidence, validation, and API observation.
 
+For the one-to-one mathematical canon, see [Rootfile Hamiltonian Canon](ROOTFILE_HAMILTONIAN_CANON.md). It maps the thirteen lawful-collapse laws to the current pipeline, broker settlement, evidence, and ML feedback paths.
+
 ---
 
 ## Rootfile-First Overlay
@@ -295,7 +297,9 @@ O1-O18 remain the legacy ICT/SMC operator contract. O19-O25 are analytics-only o
 
 ---
 
-## 20-Stage Canonical Pipeline
+## Canonical Pipeline
+
+The active decision loop has nineteen stage handlers plus completion/failure bookkeeping. Older docs may call this a 20-stage pipeline because `COMPLETED` is represented as a terminal stage result.
 
 ```
 RAW MARKET DATA (MT5 / Deriv / TradingView)
@@ -337,7 +341,7 @@ ROOTFILE AUDIT CHAIN (SHA-256 JSONL HASH CHAIN)
 | 3. ICT_EXTRACTION | Identify order blocks, FVGs, BOS/CHOCH, liquidity zones, session |
 | 4. GEOMETRY_COMPUTATION | Compute ϕ(p,t) → metric g_ij → Γⁱⱼₖ → curvature K → regime |
 | 5. TRAJECTORY_GENERATION | RK4 integration → N candidate paths with geodesic-seeded initial conditions |
-| 6. RAMANUJAN_COMPRESSION | Cluster paths into behavioral families; reduce redundancy |
+| 6. RAMANUJAN_COMPRESSION | Deterministically cluster paths by liquidity/time/entry/risk/topology signatures |
 | 7. ADMISSIBILITY_FILTERING | Π_total gate: discard paths violating constraints |
 | 8. ACTION_EVALUATION | Compute S[γ] = w_L·S_L + w_T·S_T + w_E·S_E + w_R·S_R (+ optional S_HFT) for each path |
 | 9. PATH_INTEGRAL | Weight each path: P ∝ exp(−S/ℏ); calibrate ℏ for ESS≈0.5 |
@@ -345,13 +349,30 @@ ROOTFILE AUDIT CHAIN (SHA-256 JSONL HASH CHAIN)
 | 11. PATH_SELECTION | γ* = argmax weight = argmin action |
 | 12. PROPOSAL_GENERATION | Extract (direction, entry, stop, target, size, predicted_pnl) from γ* |
 | 13. ADMISSIBILITY_CHECK | Final risk gate: check_all_limits() from risk manager |
-| 14. ENTROPY_GATE | ΔS < threshold: reject if trajectory variance too high |
+| 14. ENTROPY_GATE | Measure posterior path uncertainty and information gain; reject if uncertainty is too high |
 | 15. SCHEDULER_COLLAPSE | Issue ExecutionToken or REFUSE; **circuit breaker** wraps this call |
 | 16. EXECUTION | Submit to shadow/paper/live broker via ExecutionToken |
 | 17. RECONCILIATION | PnL divergence: \|predicted − realized\| / max(\|predicted\|, 1) |
 | 18. EVIDENCE_EMISSION | Append a canonical SHA-256 hash-chained evidence record |
 | 19. WEIGHT_UPDATE | PPO reward + backward law: w_new ← Π_simplex(w_old + η·J) |
 | 20. COMPLETED | Update state, log metrics, prepare for next cycle |
+
+### Lawful-Collapse Stage Map
+
+```text
+raw state -> geometry -> paths -> action -> projectors -> entropy
+-> scheduler -> execution -> reconciliation -> evidence -> ML feedback
+```
+
+| Runtime group | Canon coverage | Primary implementation |
+|---------------|----------------|------------------------|
+| Raw state | H1 state space | `PipelineContext`, data ingestion, state construction |
+| Geometry | H2-H4 geometry, connection, curvature | `trading/geometry/*` |
+| Paths | H5-H6 path space and compression | `trading/path_integral/*`, Ramanujan compression stage |
+| Action/projectors | H7-H8 scoring and admissibility | `trading/action/*`, `trading/risk/risk_manager.py` |
+| Entropy/authority | H9-H10 delta-S and scheduler collapse | entropy gate, `trading/kernel/scheduler.py` |
+| Collapse/reconciliation | H11-H12 broker execution and reality check | execution/reconciliation stages, MT5 and Deriv settlement CLIs |
+| Evidence/learning | H13 evidence plus ML feedback | `tachyonic_chain/audit_log.py`, PPO pending state, refusal-risk rebuild |
 
 ---
 
