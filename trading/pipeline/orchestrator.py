@@ -88,6 +88,8 @@ class PipelineContext:
     ict_geometry: Dict = field(default_factory=dict)
     geometry_data: Dict = field(default_factory=dict)  # Riemannian geometry
     trajectories: List[Dict] = field(default_factory=list)
+    path_families: Dict[str, List[str]] = field(default_factory=dict)
+    path_signatures: Dict[str, Dict[str, str]] = field(default_factory=dict)
     admissible_paths: List[Dict] = field(default_factory=list)
     action_scores: Dict = field(default_factory=dict)
     selected_path: Optional[Dict] = None
@@ -629,15 +631,131 @@ class PipelineOrchestrator:
         }
     
     def _stage_ramanujan_compression(self, context: PipelineContext) -> Dict:
-        """Stage 5: Compress paths into families"""
-        # Group trajectories by behavior type
-        families = {
-            'sweep_continuation': context.trajectories[:2],
-            'reversal': context.trajectories[2:4],
-            'consolidation': context.trajectories[4:],
+        """Stage 5: Compress paths into deterministic behavior families."""
+        families: Dict[str, List[str]] = {}
+        signatures: Dict[str, Dict[str, str]] = {}
+
+        for index, trajectory in enumerate(context.trajectories):
+            trajectory_id = str(trajectory.get('id') or f'traj_{index}')
+            trajectory['id'] = trajectory_id
+
+            signature = self._path_signature(trajectory, context)
+            family_key = "|".join(
+                f"{name}={signature[name]}"
+                for name in ("liquidity", "time", "entry", "risk", "topology")
+            )
+            trajectory['signature'] = signature
+            trajectory['family'] = family_key
+            signatures[trajectory_id] = signature
+            families.setdefault(family_key, []).append(trajectory_id)
+
+        context.path_families = families
+        context.path_signatures = signatures
+
+        return {
+            'families': sorted(families),
+            'family_count': len(families),
+            'signatures': signatures,
         }
-        
-        return {'families': list(families.keys())}
+
+    @staticmethod
+    def _trajectory_points(path: Any) -> List[Tuple[float, float]]:
+        """Normalize trajectory path points into (time, price) pairs."""
+        points: List[Tuple[float, float]] = []
+        if not isinstance(path, list):
+            return points
+
+        for index, point in enumerate(path):
+            try:
+                if isinstance(point, dict):
+                    timestamp = float(point.get('timestamp', point.get('t', index)))
+                    price = float(point.get('price', point.get('p')))
+                else:
+                    timestamp = float(point[0])
+                    price = float(point[1])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            points.append((timestamp, price))
+        return points
+
+    @staticmethod
+    def _count_items(value: Any) -> int:
+        if isinstance(value, (list, tuple, set)):
+            return len(value)
+        if isinstance(value, dict):
+            return len(value)
+        return 1 if value else 0
+
+    def _path_signature(self, trajectory: Dict, context: PipelineContext) -> Dict[str, str]:
+        """Build the v1 Ramanujan path-family signature."""
+        points = self._trajectory_points(trajectory.get('path', []))
+        prices = [price for _, price in points]
+        start = prices[0] if prices else 0.0
+        end = prices[-1] if prices else start
+        delta = end - start
+        tolerance = max(abs(start) * 1e-5, 1e-9)
+
+        if abs(delta) <= tolerance:
+            direction = "flat"
+        elif delta > 0:
+            direction = "bullish"
+        else:
+            direction = "bearish"
+
+        price_deltas = [
+            prices[i + 1] - prices[i]
+            for i in range(len(prices) - 1)
+            if abs(prices[i + 1] - prices[i]) > tolerance
+        ]
+        signs = [1 if item > 0 else -1 for item in price_deltas]
+        turns = sum(1 for i in range(len(signs) - 1) if signs[i] != signs[i + 1])
+        if not price_deltas or direction == "flat":
+            topology = "flat"
+        elif turns == 0:
+            topology = f"monotonic_{direction}"
+        else:
+            topology = "oscillating"
+
+        max_excursion = max((abs(price - start) for price in prices), default=0.0)
+        if max_excursion <= tolerance * 2:
+            risk = "low"
+        elif max_excursion <= tolerance * 8:
+            risk = "medium"
+        else:
+            risk = "high"
+
+        ict = context.ict_geometry or {}
+        fvg_count = self._count_items(
+            ict.get('fvg_zones')
+            or ict.get('fair_value_gaps')
+            or ict.get('fvg')
+        )
+        pool_count = self._count_items(
+            ict.get('liquidity_pools')
+            or ict.get('liquidity_zones')
+            or ict.get('pools')
+        )
+        sweep_count = self._count_items(ict.get('sweeps') or ict.get('sweep'))
+        liquidity = (
+            f"fvg{min(fvg_count, 3)}"
+            f"_pool{min(pool_count, 3)}"
+            f"_sweep{min(sweep_count, 3)}"
+        )
+
+        session = (
+            ict.get('session')
+            or context.market_state.get('session')
+            or context.raw_data.get('session')
+            or "unknown"
+        )
+
+        return {
+            "liquidity": liquidity,
+            "time": str(session).lower().replace(" ", "_"),
+            "entry": f"{direction}_entry",
+            "risk": risk,
+            "topology": topology,
+        }
     
     def _stage_admissibility_filtering(self, context: PipelineContext) -> Dict:
         """Stage 6: Π_total - Filter illegal paths"""
@@ -957,20 +1075,104 @@ class PipelineOrchestrator:
         return {'admissible': True, 'risk_ok': True, 'risk_level': risk_check.level.value}
     
     def _stage_entropy_gate(self, context: PipelineContext) -> Dict:
-        """Stage 13: ΔS check - information gain threshold"""
-        # Mock entropy calculation
-        delta_s = 0.3  # Would compute from path variance
-        
-        threshold = 0.5
-        passed = delta_s < threshold
+        """Stage 13: measured uncertainty gate for scheduler collapse."""
+        metrics = self._measure_path_uncertainty(context)
+        delta_s = metrics['posterior_entropy']
+        information_gain = metrics['information_gain']
+
+        context.action_scores['delta_s'] = delta_s
+        context.action_scores['information_gain'] = information_gain
+        context.action_scores['prior_entropy'] = metrics['prior_entropy']
+        context.action_scores['posterior_entropy'] = metrics['posterior_entropy']
+
+        threshold = float(getattr(self.scheduler, 'config', {}).get('max_entropy', 0.5))
+        passed = delta_s <= threshold
 
         self._audit_gate(
             "stage13_entropy",
             "passed" if passed else "failed",
             delta_s=f"{delta_s:.4f}",
+            information_gain=f"{information_gain:.4f}",
+            posterior_entropy=f"{metrics['posterior_entropy']:.4f}",
+            prior_entropy=f"{metrics['prior_entropy']:.4f}",
             threshold=f"{threshold:.4f}",
         )
-        return {'delta_s': delta_s, 'passed': passed}
+        return {**metrics, 'delta_s': delta_s, 'threshold': threshold, 'passed': passed}
+
+    @staticmethod
+    def _normalized_entropy(scores: List[float]) -> float:
+        clean_scores: List[float] = []
+        for score in scores:
+            try:
+                value = float(score)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value) and value > 0.0:
+                clean_scores.append(value)
+
+        clean = np.array(clean_scores, dtype=float)
+        if clean.size <= 1:
+            return 0.0
+
+        total = float(clean.sum())
+        if total <= 0.0:
+            return 1.0
+
+        probs = clean / total
+        entropy = -float(np.sum(probs * np.log(probs + 1e-12)))
+        return max(0.0, min(1.0, entropy / float(np.log(clean.size))))
+
+    def _posterior_scores(self, context: PipelineContext) -> List[float]:
+        weights: List[float] = []
+        for path in context.admissible_paths:
+            try:
+                weight = float(path.get('weight', 0.0))
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(weight) and weight > 0.0:
+                weights.append(weight)
+        if weights:
+            return weights
+
+        actions = []
+        for path in context.admissible_paths:
+            try:
+                action = float(path.get('action'))
+            except (TypeError, ValueError):
+                path_id = path.get('id')
+                result = context.action_scores.get(path_id, {})
+                try:
+                    action = float(result.get('total_action'))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            if np.isfinite(action):
+                actions.append(action)
+
+        if actions:
+            values = np.array(actions, dtype=float)
+            shifted = values - float(values.min())
+            scale = max(float(values.std()), float(getattr(context, '_epsilon', 0.015)), 1e-6)
+            return [float(np.exp(-item / scale)) for item in shifted]
+
+        fallback_scores = []
+        for path in context.admissible_paths:
+            try:
+                energy = abs(float(path.get('energy', 0.0)))
+            except (TypeError, ValueError):
+                energy = 0.0
+            fallback_scores.append(1.0 / (1.0 + energy))
+        return fallback_scores
+
+    def _measure_path_uncertainty(self, context: PipelineContext) -> Dict[str, float]:
+        path_count = len(context.admissible_paths)
+        prior_entropy = self._normalized_entropy([1.0] * path_count)
+        posterior_entropy = self._normalized_entropy(self._posterior_scores(context))
+        information_gain = max(0.0, prior_entropy - posterior_entropy)
+        return {
+            "prior_entropy": prior_entropy,
+            "posterior_entropy": posterior_entropy,
+            "information_gain": information_gain,
+        }
     
     def _stage_scheduler_collapse(self, context: PipelineContext) -> Dict:
         """Stage 15: Scheduler authorization (Λ) — requires prior risk gate passage."""
@@ -1030,6 +1232,8 @@ class PipelineOrchestrator:
             "stage15_scheduler",
             "passed" if decision == CollapseDecision.AUTHORIZED else "refused",
             decision=decision.name,
+            delta_s=f"{delta_s:.4f}",
+            information_gain=f"{context.action_scores.get('information_gain', 0.0):.4f}",
             symbol=context.symbol,
             token=token.token_id if token else None,
         )
@@ -1202,7 +1406,7 @@ class PipelineOrchestrator:
             )
             self.scheduler.update_action_weights(
                 pnl=-pnl_divergence * 10,
-                delta_s=0.3,
+                delta_s=float(context.action_scores.get('delta_s', 0.3)),
                 status='mismatch',
                 contrib={'L': 25, 'T': 25, 'E': 25, 'R': 25},
                 constraints_passed=False,
@@ -1283,7 +1487,7 @@ class PipelineOrchestrator:
         # Update weights — use actual gate results, not hardcoded True
         result = self.scheduler.update_action_weights(
             pnl=pnl,
-            delta_s=0.3,
+            delta_s=float(context.action_scores.get('delta_s', 0.3)),
             status=context.reconciliation_status,
             contrib=contrib,
             constraints_passed=getattr(context, 'risk_check_passed', True),

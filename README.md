@@ -2,7 +2,7 @@
 
 A production-grade trading bot that models financial markets as curved physical space and finds optimal trades using Feynman's path integral — the same mathematics that governs how particles move through quantum fields.
 
-Every trade decision is authorized by a cryptographic governance protocol, signed with Ed25519, and stored in an immutable Merkle-chained audit trail.
+Every trade decision is authorized by a cryptographic governance protocol and stored in a SHA-256 runtime evidence hash chain. Optional evidence bundles support Merkle roots and Ed25519 signatures where that path is used.
 
 ---
 
@@ -23,7 +23,8 @@ Instead of simple indicators (RSI, MACD), this system:
 
 | Guide | Description |
 |-------|-------------|
-| [Architecture Guide](docs/ARCHITECTURE.md) | System design — physics core, 20-stage pipeline, manifold geometry |
+| [Architecture Guide](docs/ARCHITECTURE.md) | System design — physics core, canonical pipeline, manifold geometry |
+| [Rootfile Hamiltonian Canon](docs/ROOTFILE_HAMILTONIAN_CANON.md) | One-to-one map from the lawful-collapse canon to the current rootfile runtime |
 | [API Reference](docs/API.md) | Complete class and method reference for all modules |
 | [Tutorials](docs/TUTORIAL.md) | Step-by-step guides: paper trading, dashboard, Telegram bot, brokers |
 | [Examples](docs/examples/README.md) | Working Python code snippets |
@@ -38,7 +39,7 @@ Instead of simple indicators (RSI, MACD), this system:
 RAW MARKET DATA (MT5 / Deriv / TradingView)
         ↓
 ┌─────────────────────────────────────────┐
-│         20-STAGE PIPELINE               │
+│         CANONICAL PIPELINE              │
 │  1. Data Ingestion                      │
 │  2. State Construction (microstructure) │
 │  3. ICT Extraction (OB, FVG, BOS)       │
@@ -56,7 +57,7 @@ RAW MARKET DATA (MT5 / Deriv / TradingView)
 │ 15. Scheduler Collapse ← CIRCUIT BREAKER│
 │ 16. Execution (paper / live)            │
 │ 17. Reconciliation ← PnL DIVERGENCE    │
-│ 18. Evidence Emission (Ed25519+Merkle)  │
+│ 18. Evidence Emission (SHA-256 chain)   │
 │ 19. Weight Update (PPO + backward law)  │
 │ 20. Completed                           │
 └─────────────────────────────────────────┘
@@ -75,7 +76,7 @@ The repository now includes a non-breaking rootfile overlay that makes the archi
 | `core.orchestration` | Select admissible paths and mint execution authority | `trading.kernel.scheduler`, `trading.kernel.apex_engine`, constraints |
 | `core.authority` | Canonical `ExecutionToken` facade and token validation | TAEP scheduler tokens plus trading scheduler token compatibility |
 | `core.execution` | Shadow/live/broker execution boundaries | `trading.shadow`, `apps.telegram.trading_live`, broker adapters |
-| `tachyonic_chain` | Evidence and Merkle audit-chain exports | `trading.evidence.evidence_chain` |
+| `tachyonic_chain` | Runtime SHA-256 audit-chain exports; optional bundle adapters | `tachyonic_chain.audit_log`, `trading.evidence.evidence_chain` |
 | `backend_api` | Telegram, dashboard, and read/control surfaces | `apps.telegram`, `trading.dashboard` |
 
 The law of motion is: data prepares state, simulation proposes, orchestration authorizes, execution acts, and evidence records. Shadow and live execution boundaries now validate scheduler-issued authority through `core.authority.validate_token(...)`; proposal modules remain token-free so analysis stays cheap and safe.

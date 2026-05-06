@@ -221,12 +221,16 @@ def test_settle_deriv_contracts_writes_ledger_evidence_and_ml_artifacts(tmp_path
     assert report.closed == 1
     assert report.records[0].status == "closed"
     assert report.records[0].ppo_feedback_status == "missing_pending_state"
+    assert report.records[0].falsification_status == "correct_authorization"
+    assert report.records[0].falsification_hash is not None
     assert ledger_path.exists()
     assert verify_execution_evidence_chain(evidence_path).valid
     rows = read_refusal_risk_dataset(dataset_path)
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert rows[0]["broker"] == "deriv"
     assert rows[0]["realized_pnl"] == 0.95
+    assert rows[1]["event_type"] == "falsification_score"
+    assert rows[1]["outcome"] == "correct_authorization"
     assert json.loads(model_path.read_text(encoding="utf-8"))["runtime_integration"] == "offline_only"
 
 
