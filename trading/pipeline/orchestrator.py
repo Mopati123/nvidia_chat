@@ -375,9 +375,215 @@ class PipelineOrchestrator:
         """Stage 1: Normalize raw data into canonical format"""
         # Already done in context initialization
         return {'normalized': True, 'source': context.source}
+
+    @staticmethod
+    def _coerce_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        return number if np.isfinite(number) else default
+
+    @classmethod
+    def _canonical_ohlcv_bars(cls, raw_data: Dict) -> List[Dict[str, float]]:
+        """Normalize dict/list OHLCV inputs into canonical bar dictionaries."""
+        source = raw_data.get('ohlcv')
+        if isinstance(source, dict):
+            raw_data = {**raw_data, **source}
+            source = None
+
+        bars: List[Dict[str, float]] = []
+        if isinstance(source, list):
+            for index, item in enumerate(source):
+                if not isinstance(item, dict):
+                    continue
+                normalized = {str(key).lower(): value for key, value in item.items()}
+                close = cls._coerce_float(normalized.get('close', normalized.get('price')))
+                high = cls._coerce_float(normalized.get('high'), close)
+                low = cls._coerce_float(normalized.get('low'), close)
+                open_price = cls._coerce_float(normalized.get('open'), close)
+                if close is None or high is None or low is None or open_price is None:
+                    continue
+                timestamp = cls._coerce_float(
+                    normalized.get('timestamp', normalized.get('time')),
+                    float(index),
+                )
+                volume = cls._coerce_float(normalized.get('volume'), 0.0) or 0.0
+                bars.append({
+                    'timestamp': timestamp if timestamp is not None else float(index),
+                    'time': timestamp if timestamp is not None else float(index),
+                    'open': open_price,
+                    'high': high,
+                    'low': low,
+                    'close': close,
+                    'volume': volume,
+                })
+            if bars:
+                return bars
+
+        required = ('open', 'high', 'low', 'close')
+        arrays = {name: raw_data.get(name) for name in required}
+        if not all(isinstance(arrays[name], (list, tuple)) for name in required):
+            return []
+
+        length = min(len(arrays[name]) for name in required)
+        volumes = raw_data.get('volume', [])
+        timestamps = raw_data.get('timestamp', raw_data.get('time', []))
+        for index in range(length):
+            open_price = cls._coerce_float(arrays['open'][index])
+            high = cls._coerce_float(arrays['high'][index])
+            low = cls._coerce_float(arrays['low'][index])
+            close = cls._coerce_float(arrays['close'][index])
+            if None in (open_price, high, low, close):
+                continue
+            volume = (
+                cls._coerce_float(volumes[index], 0.0)
+                if isinstance(volumes, (list, tuple)) and index < len(volumes)
+                else 0.0
+            )
+            timestamp = (
+                cls._coerce_float(timestamps[index], float(index))
+                if isinstance(timestamps, (list, tuple)) and index < len(timestamps)
+                else float(index)
+            )
+            bars.append({
+                'timestamp': timestamp if timestamp is not None else float(index),
+                'time': timestamp if timestamp is not None else float(index),
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume or 0.0,
+            })
+        return bars
+
+    @staticmethod
+    def _derive_ohlcv_microstructure(bars: List[Dict[str, float]], raw_data: Dict) -> Dict[str, float]:
+        """Build minimal live microstructure when only OHLCV bars are available."""
+        if not bars:
+            return {}
+
+        latest = bars[-1]
+        close = float(latest['close'])
+        spread = max(0.0, float(latest['high']) - float(latest['low']))
+
+        def _bar_velocity(current: Dict[str, float], previous: Dict[str, float]) -> float:
+            dt = abs(float(current.get('timestamp', 0.0)) - float(previous.get('timestamp', 0.0)))
+            if dt <= 0.0:
+                dt = 1.0
+            return (float(current['close']) - float(previous['close'])) / dt
+
+        velocity = _bar_velocity(bars[-1], bars[-2]) if len(bars) >= 2 else 0.0
+        previous_velocity = _bar_velocity(bars[-2], bars[-3]) if len(bars) >= 3 else 0.0
+        acceleration = velocity - previous_velocity
+        half_spread = spread / 2.0
+        session = str(raw_data.get('current_session') or raw_data.get('session') or 'ny')
+
+        return {
+            'mid': close,
+            'microprice': close,
+            'bid': close - half_spread,
+            'ask': close + half_spread,
+            'spread': spread,
+            'spread_proxy': spread,
+            'velocity': velocity,
+            'acceleration': acceleration,
+            'ofi': 0.0,
+            'session': session,
+            'current_session': session,
+            'kill_zone': bool(raw_data.get('kill_zone', False)),
+        }
+
+    @staticmethod
+    def _derive_ohlcv_fvgs(bars: List[Dict[str, float]]) -> List[Dict[str, float]]:
+        fvgs: List[Dict[str, float]] = []
+        if len(bars) < 3:
+            return fvgs
+
+        ranges = [max(0.0, float(bar['high']) - float(bar['low'])) for bar in bars[-20:]]
+        avg_range = float(np.mean(ranges)) if ranges else 0.0
+        clear_gap = max(avg_range * 0.05, abs(float(bars[-1]['close'])) * 1e-6, 1e-9)
+
+        for index in range(2, len(bars)):
+            first = bars[index - 2]
+            current = bars[index]
+            if float(current['low']) > float(first['high']):
+                bottom = float(first['high'])
+                top = float(current['low'])
+                direction = 'bullish'
+            elif float(current['high']) < float(first['low']):
+                bottom = float(current['high'])
+                top = float(first['low'])
+                direction = 'bearish'
+            else:
+                continue
+
+            if top - bottom < clear_gap:
+                continue
+            fvgs.append({
+                'top': top,
+                'bottom': bottom,
+                'midpoint': (top + bottom) / 2.0,
+                'strength': min(3.0, max(1.0, (top - bottom) / clear_gap)),
+                'direction': direction,
+                'source': 'ohlcv_gap',
+            })
+        return fvgs
+
+    @classmethod
+    def _derive_ohlcv_ict_context(cls, raw_data: Dict, bars: List[Dict[str, float]]) -> Dict[str, Any]:
+        """Derive conservative liquidity context from live OHLCV fallback bars."""
+        session = str(raw_data.get('current_session') or raw_data.get('session') or 'ny')
+        explicit_zones = raw_data.get('liquidity_zones') or raw_data.get('liquidity_pools') or []
+        explicit_fvgs = raw_data.get('fvgs') or raw_data.get('fvg_zones') or []
+
+        liquidity_zones = list(explicit_zones) if isinstance(explicit_zones, list) else []
+        if not liquidity_zones and bars:
+            recent = bars[-min(len(bars), 20):]
+            high_level = max(float(bar['high']) for bar in recent)
+            low_level = min(float(bar['low']) for bar in recent)
+            volume = sum(float(bar.get('volume', 0.0) or 0.0) for bar in recent)
+            width = max(high_level - low_level, abs(float(recent[-1]['close'])) * 1e-5, 1e-9)
+            liquidity_zones = [
+                {
+                    'level': high_level,
+                    'type': 'buy_side_liquidity',
+                    'strength': 1.0,
+                    'volume': volume,
+                    'radius': width * 0.25,
+                    'source': 'ohlcv_recent_high',
+                },
+                {
+                    'level': low_level,
+                    'type': 'sell_side_liquidity',
+                    'strength': 1.0,
+                    'volume': volume,
+                    'radius': width * 0.25,
+                    'source': 'ohlcv_recent_low',
+                },
+            ]
+
+        fvgs = list(explicit_fvgs) if isinstance(explicit_fvgs, list) else []
+        if not fvgs:
+            fvgs = cls._derive_ohlcv_fvgs(bars)
+
+        return {
+            'liquidity_zones': liquidity_zones,
+            'liquidity_pools': liquidity_zones,
+            'fvgs': fvgs,
+            'fvg_zones': fvgs,
+            'fair_value_gaps': fvgs,
+            'sweeps': raw_data.get('sweeps', []),
+            'session': session,
+            'current_session': session,
+            'kill_zone': bool(raw_data.get('kill_zone', False)),
+            'htf_bias': raw_data.get('htf_bias', 'neutral'),
+        }
     
     def _stage_state_construction(self, context: PipelineContext) -> Dict:
         """Stage 2: Build MarketState from raw data"""
+        ohlcv_bars = self._canonical_ohlcv_bars(context.raw_data)
+
         # If microstructure enabled, process ticks
         if self.use_microstructure and 'ticks' in context.raw_data:
             from ..microstructure import TickProcessor
@@ -390,12 +596,29 @@ class PipelineOrchestrator:
             if micro:
                 context.market_state['microstructure'] = micro
 
+        if ohlcv_bars and not context.market_state.get('microstructure'):
+            context.market_state['microstructure'] = self._derive_ohlcv_microstructure(
+                ohlcv_bars,
+                context.raw_data,
+            )
+
         order_book_result = self._stage_order_book_analysis(context)
         
-        context.market_state['ohlcv'] = context.raw_data.get('ohlcv', [])
+        context.market_state['ohlcv'] = ohlcv_bars
         context.market_state['symbol'] = context.symbol
+        context.market_state['session'] = (
+            context.raw_data.get('current_session')
+            or context.raw_data.get('session')
+            or context.market_state.get('microstructure', {}).get('session')
+            or 'ny'
+        )
         
-        return {'state_built': True, **order_book_result}
+        return {
+            'state_built': True,
+            'ohlcv_bars': len(ohlcv_bars),
+            'microstructure_source': 'ohlcv' if ohlcv_bars and 'ticks' not in context.raw_data else 'ticks',
+            **order_book_result,
+        }
 
     def _stage_order_book_analysis(self, context: PipelineContext) -> Dict:
         """Stage 2.5: Optional analytics-only order-book depth analysis."""
@@ -427,19 +650,15 @@ class PipelineOrchestrator:
         - Stage 12 (ADMISSIBILITY_CHECK): position size gate
         - Risk manager: live limit update
         """
-        context.ict_geometry = {
-            'liquidity_zones': context.raw_data.get('liquidity_zones', []),
-            'fvgs': context.raw_data.get('fvgs', []),
-            'session': context.raw_data.get('session', 'ny'),
-            'htf_bias': context.raw_data.get('htf_bias', 'neutral'),
-        }
+        bars = context.market_state.get('ohlcv') or self._canonical_ohlcv_bars(context.raw_data)
+        context.ict_geometry = self._derive_ohlcv_ict_context(context.raw_data, bars)
 
         # Regime detection — requires at least a minimal price DataFrame
         try:
             import pandas as pd
             from ..core.market_regime_detector import MarketRegimeDetector
 
-            ohlcv = context.raw_data.get('ohlcv') or context.market_state.get('ohlcv', [])
+            ohlcv = bars
             if len(ohlcv) >= 20:
                 df = pd.DataFrame(ohlcv)
                 # Normalize column names to what detector expects
@@ -763,6 +982,76 @@ class PipelineOrchestrator:
         context.admissible_paths = context.trajectories
         
         return {'admissible_count': len(context.admissible_paths)}
+
+    @staticmethod
+    def _nearest_fvg_midpoint(price: float, fvgs: List[Dict], fallback: float) -> float:
+        midpoint = fallback
+        nearest_distance = float('inf')
+        for fvg in fvgs:
+            try:
+                candidate = float(fvg.get('midpoint', (float(fvg['top']) + float(fvg['bottom'])) / 2.0))
+            except (TypeError, ValueError, KeyError):
+                continue
+            distance = abs(price - candidate)
+            if distance < nearest_distance:
+                midpoint = candidate
+                nearest_distance = distance
+        return midpoint
+
+    def _trajectory_action_steps(self, trajectory: Dict, context: PipelineContext) -> List[Dict[str, float]]:
+        """Add deterministic path-local action features for OHLCV-only live input."""
+        points = self._trajectory_points(trajectory.get('path', []))
+        if not points:
+            return []
+
+        micro = context.market_state.get('microstructure', {}) or {}
+        ict = context.ict_geometry or {}
+        fvgs = ict.get('fvgs') or ict.get('fvg_zones') or []
+        prices = [price for _, price in points]
+        start = prices[0]
+        end = prices[-1]
+        path_high = max(prices)
+        path_low = min(prices)
+        path_range = max(path_high - path_low, abs(start) * 1e-9, 1e-12)
+        direction = 1.0 if end >= start else -1.0
+        fib_level = (
+            path_low + 0.618 * path_range
+            if direction >= 0.0
+            else path_high - 0.618 * path_range
+        )
+        fallback_midpoint = (path_high + path_low) / 2.0
+        spread = float(micro.get('spread_proxy', micro.get('spread', 0.0)) or 0.0)
+        base_ofi = float(micro.get('ofi', 0.0) or 0.0)
+        micro_acceleration = float(micro.get('acceleration', 0.0) or 0.0)
+
+        velocities: List[float] = []
+        for index, (timestamp, price) in enumerate(points):
+            if index == 0:
+                velocities.append(float(micro.get('velocity', 0.0) or 0.0))
+                continue
+            previous_time, previous_price = points[index - 1]
+            dt = abs(timestamp - previous_time) or 1.0
+            velocities.append((price - previous_price) / dt)
+
+        steps: List[Dict[str, float]] = []
+        for index, (timestamp, price) in enumerate(points):
+            previous_velocity = velocities[index - 1] if index > 0 else velocities[index]
+            acceleration = (velocities[index] - previous_velocity) + micro_acceleration
+            adverse = max(0.0, (start - price) * direction)
+            if direction < 0.0:
+                adverse = max(0.0, price - start)
+            steps.append({
+                'price': price,
+                'ofi': base_ofi,
+                'timestamp': timestamp,
+                'spread': spread,
+                'acceleration': acceleration,
+                'drawdown': adverse,
+                'fvg_midpoint': self._nearest_fvg_midpoint(price, fvgs, fallback_midpoint),
+                'fib_level': fib_level,
+            })
+
+        return steps
     
     def _stage_action_evaluation(self, context: PipelineContext) -> Dict:
         """Stage 7: Compute S[γ] for each path"""
@@ -780,24 +1069,27 @@ class PipelineOrchestrator:
             }
 
             for traj in context.admissible_paths:
-                # Convert path format
-                micro = context.market_state.get('microstructure', {})
-                path = [
-                    {
-                        'price': p[1],
-                        'ofi': micro.get('ofi', 0.0),
-                        'timestamp': p[0],
-                        'spread': micro.get('spread', 0.0),
-                        'acceleration': micro.get('acceleration', 0.0),
-                    }
-                    for p in traj['path']
-                ]
+                path = self._trajectory_action_steps(traj, context)
 
                 result = action_comp.compute_full_action(path, microstate, weights)
+                result['path_feature_source'] = (
+                    'ohlcv_fallback'
+                    if context.market_state.get('ohlcv') and not context.raw_data.get('ticks')
+                    else 'microstructure'
+                )
                 context.action_scores[traj['id']] = result
                 traj['action'] = result['total_action']
 
-        return {'actions_computed': len(context.action_scores)}
+        action_values = [
+            float(score.get('total_action', 0.0))
+            for score in context.action_scores.values()
+            if isinstance(score, dict)
+        ]
+        _, _, action_spread = self._score_spread(action_values)
+        return {
+            'actions_computed': len(context.action_scores),
+            'action_spread': action_spread,
+        }
     
     def _stage_path_integral(self, context: PipelineContext) -> Dict:
         """Stage 8: Compute Ψ = Σ e^(iS/ℏ)"""
@@ -1084,17 +1376,36 @@ class PipelineOrchestrator:
         context.action_scores['information_gain'] = information_gain
         context.action_scores['prior_entropy'] = metrics['prior_entropy']
         context.action_scores['posterior_entropy'] = metrics['posterior_entropy']
+        context.action_scores['entropy_diagnostics'] = {
+            'path_count': metrics['path_count'],
+            'posterior_score_source': metrics['posterior_score_source'],
+            'posterior_score_min': metrics['posterior_score_min'],
+            'posterior_score_max': metrics['posterior_score_max'],
+            'posterior_score_spread': metrics['posterior_score_spread'],
+            'selected_path_id': metrics['selected_path_id'],
+            'selected_family': metrics['selected_family'],
+            'entropy_reason': metrics['entropy_reason'],
+        }
 
         threshold = float(getattr(self.scheduler, 'config', {}).get('max_entropy', 0.5))
         passed = delta_s <= threshold
+        status = "passed" if passed else "failed"
 
         self._audit_gate(
             "stage13_entropy",
-            "passed" if passed else "failed",
+            status,
             delta_s=f"{delta_s:.4f}",
+            entropy_reason=metrics['entropy_reason'] if not passed else None,
             information_gain=f"{information_gain:.4f}",
+            path_count=metrics['path_count'],
             posterior_entropy=f"{metrics['posterior_entropy']:.4f}",
+            posterior_score_max=f"{metrics['posterior_score_max']:.6g}",
+            posterior_score_min=f"{metrics['posterior_score_min']:.6g}",
+            posterior_score_source=metrics['posterior_score_source'],
+            posterior_score_spread=f"{metrics['posterior_score_spread']:.6g}",
             prior_entropy=f"{metrics['prior_entropy']:.4f}",
+            selected_family=metrics['selected_family'],
+            selected_path_id=metrics['selected_path_id'],
             threshold=f"{threshold:.4f}",
         )
         return {**metrics, 'delta_s': delta_s, 'threshold': threshold, 'passed': passed}
@@ -1122,7 +1433,53 @@ class PipelineOrchestrator:
         entropy = -float(np.sum(probs * np.log(probs + 1e-12)))
         return max(0.0, min(1.0, entropy / float(np.log(clean.size))))
 
-    def _posterior_scores(self, context: PipelineContext) -> List[float]:
+    @staticmethod
+    def _score_spread(values: List[float]) -> Tuple[float, float, float]:
+        if not values:
+            return 0.0, 0.0, 0.0
+        arr = np.array(values, dtype=float)
+        return float(arr.min()), float(arr.max()), float(arr.max() - arr.min())
+
+    @staticmethod
+    def _has_meaningful_spread(values: List[float]) -> bool:
+        if len(values) <= 1:
+            return True
+        score_min, score_max, spread = PipelineOrchestrator._score_spread(values)
+        scale = max(abs(score_min), abs(score_max), 1.0)
+        return bool(spread > max(1e-9, scale * 1e-6))
+
+    @staticmethod
+    def _costs_to_posterior_scores(costs: List[float]) -> List[float]:
+        if len(costs) == 1:
+            return [1.0]
+        if not PipelineOrchestrator._has_meaningful_spread(costs):
+            return []
+        arr = np.array(costs, dtype=float)
+        spread = float(arr.max() - arr.min())
+        if spread <= 0.0:
+            return []
+        normalized_cost = (arr - float(arr.min())) / spread
+        temperature = 0.08
+        scores = np.exp(-normalized_cost / temperature)
+        return [float(score) for score in scores if np.isfinite(score) and score > 0.0]
+
+    def _path_action_costs(self, context: PipelineContext) -> List[float]:
+        actions: List[float] = []
+        for path in context.admissible_paths:
+            path_id = path.get('id')
+            result = context.action_scores.get(path_id, {})
+            try:
+                if isinstance(result, dict) and 'total_action' in result:
+                    action = float(result.get('total_action'))
+                else:
+                    action = float(path.get('action'))
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(action):
+                actions.append(action)
+        return actions
+
+    def _path_weight_scores(self, context: PipelineContext) -> List[float]:
         weights: List[float] = []
         for path in context.admissible_paths:
             try:
@@ -1131,47 +1488,74 @@ class PipelineOrchestrator:
                 continue
             if np.isfinite(weight) and weight > 0.0:
                 weights.append(weight)
-        if weights:
-            return weights
+        return weights
 
-        actions = []
-        for path in context.admissible_paths:
-            try:
-                action = float(path.get('action'))
-            except (TypeError, ValueError):
-                path_id = path.get('id')
-                result = context.action_scores.get(path_id, {})
-                try:
-                    action = float(result.get('total_action'))
-                except (TypeError, ValueError, AttributeError):
-                    continue
-            if np.isfinite(action):
-                actions.append(action)
+    def _posterior_scores_with_diagnostics(self, context: PipelineContext) -> Tuple[List[float], Dict[str, Any]]:
+        path_count = len(context.admissible_paths)
+        selected = context.selected_path or {}
+        selected_path_id = str(selected.get('id') or '')
+        selected_family = str(selected.get('family') or '')
 
-        if actions:
-            values = np.array(actions, dtype=float)
-            shifted = values - float(values.min())
-            scale = max(float(values.std()), float(getattr(context, '_epsilon', 0.015)), 1e-6)
-            return [float(np.exp(-item / scale)) for item in shifted]
+        actions = self._path_action_costs(context)
+        action_min, action_max, action_spread = self._score_spread(actions)
+        if len(actions) == path_count:
+            action_scores = self._costs_to_posterior_scores(actions)
+            if action_scores:
+                score_min, score_max, score_spread = self._score_spread(action_scores)
+                return action_scores, {
+                    "path_count": path_count,
+                    "posterior_score_source": "action",
+                    "posterior_score_min": score_min,
+                    "posterior_score_max": score_max,
+                    "posterior_score_spread": score_spread,
+                    "selected_path_id": selected_path_id,
+                    "selected_family": selected_family,
+                    "entropy_reason": "action_distribution_measured",
+                }
 
-        fallback_scores = []
-        for path in context.admissible_paths:
-            try:
-                energy = abs(float(path.get('energy', 0.0)))
-            except (TypeError, ValueError):
-                energy = 0.0
-            fallback_scores.append(1.0 / (1.0 + energy))
-        return fallback_scores
+        weights = self._path_weight_scores(context)
+        if len(weights) == path_count and self._has_meaningful_spread(weights):
+            score_min, score_max, score_spread = self._score_spread(weights)
+            return weights, {
+                "path_count": path_count,
+                "posterior_score_source": "weight",
+                "posterior_score_min": score_min,
+                "posterior_score_max": score_max,
+                "posterior_score_spread": score_spread,
+                "selected_path_id": selected_path_id,
+                "selected_family": selected_family,
+                "entropy_reason": "weight_distribution_measured",
+            }
 
-    def _measure_path_uncertainty(self, context: PipelineContext) -> Dict[str, float]:
+        score_source = "action" if actions else ("weight" if weights else "uniform")
+        score_min = action_min
+        score_max = action_max
+        score_spread = action_spread
+        if not actions and weights:
+            score_min, score_max, score_spread = self._score_spread(weights)
+
+        return [1.0] * path_count, {
+            "path_count": path_count,
+            "posterior_score_source": score_source,
+            "posterior_score_min": score_min,
+            "posterior_score_max": score_max,
+            "posterior_score_spread": score_spread,
+            "selected_path_id": selected_path_id,
+            "selected_family": selected_family,
+            "entropy_reason": "flat_posterior_distribution",
+        }
+
+    def _measure_path_uncertainty(self, context: PipelineContext) -> Dict[str, Any]:
         path_count = len(context.admissible_paths)
         prior_entropy = self._normalized_entropy([1.0] * path_count)
-        posterior_entropy = self._normalized_entropy(self._posterior_scores(context))
+        posterior_scores, diagnostics = self._posterior_scores_with_diagnostics(context)
+        posterior_entropy = self._normalized_entropy(posterior_scores)
         information_gain = max(0.0, prior_entropy - posterior_entropy)
         return {
             "prior_entropy": prior_entropy,
             "posterior_entropy": posterior_entropy,
             "information_gain": information_gain,
+            **diagnostics,
         }
     
     def _stage_scheduler_collapse(self, context: PipelineContext) -> Dict:

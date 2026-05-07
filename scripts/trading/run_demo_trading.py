@@ -98,6 +98,7 @@ DERIV_LIVE_MAX_DURATION = 15
 DERIV_LIVE_DURATION_UNIT = "m"
 DERIV_LIVE_MAX_CONTRACTS = 1
 DERIV_LIVE_REQUIRED_CONTRACT_TYPES = ("CALL", "PUT")
+DERIV_LIVE_DEFAULT_MAX_RUNTIME_SECONDS = 600.0
 
 
 def deriv_symbol_for(symbol: str) -> str:
@@ -133,6 +134,16 @@ def live_demo_argument_blocker(args: argparse.Namespace) -> Optional[str]:
     if args.max_contracts != DERIV_LIVE_MAX_CONTRACTS:
         return "Deriv live-demo max-contracts must be 1"
     return None
+
+
+def max_runtime_seconds_for(args: argparse.Namespace) -> float:
+    """Resolve the runner wall-clock guard for canary-safe live-demo mode."""
+    configured = float(getattr(args, "max_runtime_seconds", 0.0) or 0.0)
+    if configured > 0:
+        return configured
+    if getattr(args, "live_demo", False) and getattr(args, "mode", "") == "deriv":
+        return DERIV_LIVE_DEFAULT_MAX_RUNTIME_SECONDS
+    return 0.0
 
 
 def deriv_live_preflight_blocker(deriv_broker_ref: Any, args: argparse.Namespace) -> Optional[str]:
@@ -230,6 +241,18 @@ class TickAccumulator:
             and (time.time() - self._last_run) >= self.pipeline_interval
         )
 
+    def status(self) -> Dict[str, Any]:
+        with self._lock:
+            tick_count = len(self._ticks)
+        elapsed = time.time() - self._last_run
+        return {
+            "tick_count": tick_count,
+            "min_ticks": self.min_ticks,
+            "pipeline_interval": self.pipeline_interval,
+            "seconds_since_last_run": elapsed,
+            "ready": tick_count >= self.min_ticks and elapsed >= self.pipeline_interval,
+        }
+
     def to_ohlcv(self) -> Dict:
         with self._lock:
             prices = [t[0] for t in self._ticks]
@@ -265,24 +288,117 @@ class SessionStats:
         self.authorized = 0
         self.refused = 0
         self.ppo_updates = 0
+        self.last_tick_ts = 0.0
+        self.accumulator_tick_count = 0
+        self.accumulator_ready = False
+        self.accumulator_min_ticks = 0
+        self.accumulator_interval = 0.0
+        self.accumulator_seconds_since_run = 0.0
+        self.last_refusal_reason = ""
+        self.last_execution_status = ""
+        self.last_execution_reason = ""
+        self.contract_observed = ""
+        self.stop_reason = ""
         self.session_start = time.time()
         self._lock = Lock()
 
     def tick(self):
         with self._lock:
             self.ticks_received += 1
+            self.last_tick_ts = time.time()
 
-    def pipeline(self, decision: str):
+    def accumulator(self, status: Dict[str, Any]):
+        with self._lock:
+            self.accumulator_tick_count = int(status.get("tick_count", 0) or 0)
+            self.accumulator_ready = bool(status.get("ready", False))
+            self.accumulator_min_ticks = int(status.get("min_ticks", 0) or 0)
+            self.accumulator_interval = float(status.get("pipeline_interval", 0.0) or 0.0)
+            self.accumulator_seconds_since_run = float(
+                status.get("seconds_since_last_run", 0.0) or 0.0
+            )
+
+    def pipeline(self, decision: str, reason: str = ""):
         with self._lock:
             self.pipeline_runs += 1
             if decision == "AUTHORIZED":
                 self.authorized += 1
             else:
                 self.refused += 1
+                if reason:
+                    self.last_refusal_reason = reason
+
+    def execution(self, output: Optional[Dict[str, Any]]):
+        if not output:
+            return
+        status = "executed" if output.get("executed") else "failed"
+        reason = str(output.get("reason") or "")
+        order = output.get("order") or {}
+        contract_id = str(order.get("order_id") or order.get("contract_id") or "")
+        with self._lock:
+            self.last_execution_status = status
+            self.last_execution_reason = reason
+            if contract_id:
+                self.contract_observed = contract_id
+
+    def set_contract_observed(self, contract_id: Any):
+        with self._lock:
+            self.contract_observed = str(contract_id)
+
+    def set_stop_reason(self, reason: str):
+        if not reason:
+            return
+        with self._lock:
+            if not self.stop_reason:
+                self.stop_reason = reason
 
     def ppo_update(self):
         with self._lock:
             self.ppo_updates += 1
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            last_tick_age = time.time() - self.last_tick_ts if self.last_tick_ts else None
+            return {
+                "ticks_received": self.ticks_received,
+                "pipeline_runs": self.pipeline_runs,
+                "authorized": self.authorized,
+                "refused": self.refused,
+                "ppo_updates": self.ppo_updates,
+                "last_tick_age": last_tick_age,
+                "accumulator_tick_count": self.accumulator_tick_count,
+                "accumulator_ready": self.accumulator_ready,
+                "accumulator_min_ticks": self.accumulator_min_ticks,
+                "accumulator_interval": self.accumulator_interval,
+                "accumulator_seconds_since_run": self.accumulator_seconds_since_run,
+                "last_refusal_reason": self.last_refusal_reason,
+                "last_execution_status": self.last_execution_status,
+                "last_execution_reason": self.last_execution_reason,
+                "contract_observed": self.contract_observed,
+                "stop_reason": self.stop_reason,
+            }
+
+    def format_deriv_live_summary(self) -> str:
+        snap = self.snapshot()
+        last_tick_age = snap["last_tick_age"]
+        last_tick_text = "none" if last_tick_age is None else f"{last_tick_age:.1f}s"
+        return (
+            "ticks={ticks_received} accumulator={accumulator_tick_count}/{accumulator_min_ticks} "
+            "ready={accumulator_ready} interval={accumulator_interval:.1f}s "
+            "since_run={accumulator_seconds_since_run:.1f}s pipeline_runs={pipeline_runs} "
+            "authorized={authorized} refused={refused} last_refusal={last_refusal_reason} "
+            "stage16={last_execution_status}:{last_execution_reason} "
+            "contract={contract_observed} stop_reason={stop_reason} last_tick_age={last_tick}"
+        ).format(
+            **{
+                **snap,
+                "last_refusal_reason": snap["last_refusal_reason"] or "none",
+                "last_execution_status": snap["last_execution_status"] or "none",
+                "last_execution_reason": snap["last_execution_reason"] or "none",
+                "contract_observed": snap["contract_observed"] or "none",
+                "stop_reason": snap["stop_reason"] or "none",
+                "last_tick": last_tick_text,
+            }
+        )
 
     def print_status(self, orch, ppo_agent, deriv_ok: bool, mt5_ok: bool):
         elapsed = time.time() - self.session_start
@@ -312,7 +428,21 @@ class SessionStats:
         print("=" * 60)
         print(f"  Connections  Deriv: {'OK' if deriv_ok else 'OFF'}  |  MT5: {'OK' if mt5_ok else 'OFF'}")
         print(f"  Ticks recv:  {self.ticks_received:,}")
+        print(
+            "  Accumulator: "
+            f"{self.accumulator_tick_count}/{self.accumulator_min_ticks} ticks | "
+            f"ready={self.accumulator_ready} | "
+            f"interval={self.accumulator_interval:.0f}s"
+        )
         print(f"  Pipeline:    {self.pipeline_runs} runs  ({self.authorized} auth / {self.refused} refused)")
+        if self.last_refusal_reason:
+            print(f"  Last refusal:{self.last_refusal_reason}")
+        if self.last_execution_status:
+            print(f"  Stage 16:    {self.last_execution_status} {self.last_execution_reason}".rstrip())
+        if self.contract_observed:
+            print(f"  Contract:    {self.contract_observed}")
+        if self.stop_reason:
+            print(f"  Stop reason: {self.stop_reason}")
         print(f"  Daily PnL:   ${pnl:+.2f}  {'[KILL SWITCH ON]' if kill else ''}")
         print(f"  Circuit:     {cb_state}")
         print(f"  PnL diverg:  {divg_mean:.1%} avg (last {len(divg) if orch else 0} trades)")
@@ -323,6 +453,22 @@ class SessionStats:
 # ---------------------------------------------------------------------------
 # Core pipeline handler
 # ---------------------------------------------------------------------------
+
+def _accumulator_status(accumulator: Any, ready: bool) -> Dict[str, Any]:
+    status_fn = getattr(accumulator, "status", None)
+    if callable(status_fn):
+        status = status_fn()
+        if isinstance(status, dict):
+            status["ready"] = ready
+            return status
+    return {
+        "tick_count": 0,
+        "min_ticks": getattr(accumulator, "min_ticks", 0),
+        "pipeline_interval": getattr(accumulator, "pipeline_interval", 0.0),
+        "seconds_since_last_run": 0.0,
+        "ready": ready,
+    }
+
 
 def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                             stats: SessionStats, symbol: str, mode: str,
@@ -372,7 +518,9 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
 
         accumulator.add(price, time.time())
 
-        if not accumulator.ready():
+        ready = accumulator.ready()
+        stats.accumulator(_accumulator_status(accumulator, ready))
+        if not ready:
             return
 
         # Live mode gates: skip pipeline if an open position exists or cooldown active
@@ -386,6 +534,7 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                         "Deriv live-demo gate: %d active contract(s); stopping canary",
                         len(active_contracts),
                     )
+                    stats.set_stop_reason("active_deriv_contract_detected")
                     os.kill(os.getpid(), signal.SIGINT)
                     return
             if live_broker == "mt5" and _mt5_api is not None:
@@ -404,7 +553,9 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
             return
 
         decision = getattr(ctx, "collapse_decision", "REFUSED") or "REFUSED"
-        stats.pipeline(decision)
+        refusal_reason = _context_refusal_reason(ctx) if decision != "AUTHORIZED" else ""
+        stats.pipeline(decision, refusal_reason)
+        stats.execution(_stage_output(ctx, "execution"))
 
         if decision == "AUTHORIZED" and ctx.proposal:
             p = ctx.proposal
@@ -416,11 +567,14 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                 p.get("predicted_pnl", 0),
             )
 
-            # Log trade to CSV
-            if csv_writer:
+            execution_result = getattr(ctx, "execution_result", {}) or {}
+
+            # Log only actual live-demo executions to avoid fake settlement inputs.
+            should_log_trade = (not live_mode) or bool(execution_result)
+            if csv_writer and should_log_trade:
                 ticket = "paper"
-                if hasattr(ctx, "execution_result") and ctx.execution_result:
-                    ticket = ctx.execution_result.get("order_id", "paper")
+                if execution_result:
+                    ticket = execution_result.get("order_id", "paper")
                 csv_writer.writerow({
                     "time": datetime.now().isoformat(),
                     "symbol": symbol,
@@ -435,21 +589,26 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                 })
                 if csv_file:
                     csv_file.flush()
+            elif live_mode:
+                logger.warning(
+                    "Authorized proposal did not produce live execution; not writing trade row"
+                )
 
             deriv_canary_order_id = None
 
             # Record trade time for cooldown
-            if live_mode and hasattr(ctx, "execution_result") and ctx.execution_result:
+            if live_mode and execution_result:
                 _last_trade_time[0] = time.time()
                 if live_broker == "deriv":
-                    deriv_canary_order_id = ctx.execution_result.get("order_id", "unknown")
+                    deriv_canary_order_id = execution_result.get("order_id", "unknown")
+                    stats.set_contract_observed(deriv_canary_order_id)
 
             # Register position with MT5 close tracker — real PnL feeds PPO on close
-            if ppo_hook and hasattr(ctx, "execution_result") and ctx.execution_result:
+            if ppo_hook and execution_result:
                 import threading as _threading
                 from types import SimpleNamespace
 
-                trade_id = str(ctx.execution_result.get("order_id", f"t_{int(time.time())}"))
+                trade_id = str(execution_result.get("order_id", f"t_{int(time.time())}"))
                 predicted = p.get("predicted_pnl", 10.0)
 
                 _selected_path    = getattr(ctx, 'selected_path', {}) or {}
@@ -493,7 +652,7 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
 
                 if live_mode and live_broker == "mt5" and mt5_broker_ref is not None and _tracker is not None:
                     try:
-                        ticket_int = int(ctx.execution_result.get("order_id", ""))
+                        ticket_int = int(execution_result.get("order_id", ""))
                         _tracker.track(ticket_int, trade_id, _ppo_callback,
                                        predicted_pnl=predicted)
                     except (ValueError, TypeError):
@@ -512,6 +671,7 @@ def build_pipeline_handler(orch, ppo_hook, accumulator: TickAccumulator,
                     ).start()
 
             if deriv_canary_order_id is not None:
+                stats.set_stop_reason("deriv_contract_observed")
                 logger.info(
                     "Deriv live-demo canary observed contract %s; stopping after PPO entry persistence",
                     deriv_canary_order_id,
@@ -532,6 +692,87 @@ def status_printer(orch, ppo_agent, stats: SessionStats,
     while not stop_flag():
         time.sleep(30)
         stats.print_status(orch, ppo_agent, deriv_ok, mt5_ok)
+
+
+def _stage_output(context: Any, stage_value: str) -> Dict[str, Any]:
+    """Return the last recorded output for a pipeline stage value."""
+    for result in reversed(getattr(context, "stage_history", []) or []):
+        stage = getattr(result, "stage", None)
+        value = getattr(stage, "value", stage)
+        if value == stage_value:
+            output = getattr(result, "output", None)
+            return output if isinstance(output, dict) else {}
+    return {}
+
+
+def _context_refusal_reason(context: Any) -> str:
+    """Best-effort refusal reason for canary status summaries."""
+    scheduler = _stage_output(context, "scheduler_collapse")
+    if scheduler.get("reason"):
+        return str(scheduler["reason"])
+    if scheduler.get("decision") and scheduler.get("decision") != "AUTHORIZED":
+        return f"scheduler_{scheduler['decision']}"
+    admissibility = _stage_output(context, "admissibility_check")
+    if admissibility.get("reason"):
+        return str(admissibility["reason"])
+    entropy = _stage_output(context, "entropy_gate")
+    if entropy and entropy.get("passed") is False:
+        return (
+            "entropy_gate_failed:"
+            f"{float(entropy.get('delta_s', 0.0)):.4f}>"
+            f"{float(entropy.get('threshold', 0.0)):.4f}"
+        )
+    failed = _stage_output(context, "failed")
+    if failed.get("reason"):
+        return str(failed["reason"])
+    return ""
+
+
+async def run_tick_loop_until_stopped(
+    tick_loop: Any,
+    *,
+    deriv_broker: Any = None,
+    mt5_broker: Any = None,
+    symbol: str = "EURUSD",
+    max_runtime_seconds: float = 0.0,
+    stats: Optional[SessionStats] = None,
+) -> str:
+    """Run the async tick loop with an optional wall-clock guard."""
+    async def _run_loop():
+        await tick_loop.run(
+            deriv_broker=deriv_broker,
+            mt5_broker=mt5_broker,
+            symbol=symbol,
+        )
+
+    started = time.monotonic()
+    timed_out = False
+    try:
+        if max_runtime_seconds and max_runtime_seconds > 0:
+            await asyncio.wait_for(_run_loop(), timeout=max_runtime_seconds)
+        else:
+            await _run_loop()
+    except asyncio.TimeoutError:
+        timed_out = True
+
+    elapsed = time.monotonic() - started
+    stopped_at_guard = (
+        bool(max_runtime_seconds and max_runtime_seconds > 0)
+        and elapsed >= float(max_runtime_seconds)
+    )
+    if timed_out or stopped_at_guard:
+        contract = stats.snapshot().get("contract_observed") if stats else ""
+        reason = "max_runtime_after_contract" if contract else "max_runtime_no_contract"
+        if stats:
+            stats.set_stop_reason(reason)
+        logger.warning(
+            "Live-demo max runtime reached after %.0fs (%s)",
+            max_runtime_seconds,
+            reason,
+        )
+        return reason
+
+    return "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -560,11 +801,14 @@ def main():
                         help="Deriv live-demo duration unit (only minutes are allowed)")
     parser.add_argument("--max-contracts", type=int, default=1,
                         help="Deriv live-demo active contract limit (must be 1)")
+    parser.add_argument("--max-runtime-seconds", type=float, default=0.0,
+                        help="Optional wall-clock stop guard; Deriv live-demo defaults to 600 seconds")
     parser.add_argument("--ppo-checkpoint", default="data/models/ppo_live_demo.pt",
                         help="Durable PPO checkpoint for demo feedback")
     parser.add_argument("--ppo-pending", default="data/models/ppo_live_demo_pending.json",
                         help="Pending PPO trade-entry states for restart-safe settlement")
     args = parser.parse_args()
+    max_runtime_seconds = max_runtime_seconds_for(args)
 
     blocker = live_demo_argument_blocker(args)
     if blocker:
@@ -579,7 +823,7 @@ def main():
             print(
                 "  LIVE DEMO: Deriv contract canary | "
                 f"stake=${args.deriv_stake:.2f} | duration={args.deriv_duration}{args.deriv_duration_unit} | "
-                f"max-contracts={args.max_contracts}"
+                f"max-contracts={args.max_contracts} | max-runtime={max_runtime_seconds:.0f}s"
             )
         else:
             print(f"  LIVE DEMO: real orders | lot={args.lot_size} | max-loss=${args.max_loss}")
@@ -810,17 +1054,20 @@ def main():
             mt5_poll_interval=0.010,
         )
 
-        async def _run():
-            await tick_loop.run(
-                deriv_broker=deriv_broker if deriv_ok else None,
-                mt5_broker=mt5_broker if mt5_ok else None,
-                symbol=args.symbol,
-            )
-
         logger.info("Starting async tick loop for %s...", args.symbol)
         try:
-            asyncio.run(_run())
+            asyncio.run(
+                run_tick_loop_until_stopped(
+                    tick_loop,
+                    deriv_broker=deriv_broker if deriv_ok else None,
+                    mt5_broker=mt5_broker if mt5_ok else None,
+                    symbol=args.symbol,
+                    max_runtime_seconds=max_runtime_seconds,
+                    stats=stats,
+                )
+            )
         except KeyboardInterrupt:
+            stats.set_stop_reason("interrupted")
             pass
 
     # ------------------------------------------------------------------
@@ -828,6 +1075,12 @@ def main():
     # ------------------------------------------------------------------
     _stopped[0] = True
     logger.info("Shutting down...")
+    if live_mode and live_broker == "deriv" and not stats.snapshot().get("contract_observed"):
+        if not stats.snapshot().get("stop_reason"):
+            stats.set_stop_reason("runner_stopped_no_contract")
+        logger.warning("DERIV LIVE DEMO NO-CONTRACT SUMMARY | %s", stats.format_deriv_live_summary())
+    elif live_mode and live_broker == "deriv":
+        logger.info("DERIV LIVE DEMO CONTRACT SUMMARY | %s", stats.format_deriv_live_summary())
 
     if deriv_broker and deriv_ok:
         try:

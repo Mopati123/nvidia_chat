@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import csv
+import io
 import json
 from argparse import Namespace
 from types import SimpleNamespace
@@ -14,8 +17,15 @@ from scripts.trading.run_demo_trading import (
     deriv_live_preflight_blocker,
     deriv_symbol_for,
     live_demo_argument_blocker,
+    max_runtime_seconds_for,
+    run_tick_loop_until_stopped,
 )
-from trading.pipeline.orchestrator import PipelineContext, PipelineOrchestrator
+from trading.pipeline.orchestrator import (
+    PipelineContext,
+    PipelineOrchestrator,
+    PipelineStage,
+    StageResult,
+)
 
 
 def _args(**overrides) -> Namespace:
@@ -127,6 +137,177 @@ def test_deriv_live_demo_preflight_blocks_missing_contract_type():
     )
 
     assert blocker == "Deriv contract type(s) unavailable for frxEURUSD: PUT"
+
+
+def test_deriv_live_demo_defaults_to_ten_minute_runtime_guard():
+    assert max_runtime_seconds_for(_args()) == 600.0
+    assert max_runtime_seconds_for(_args(max_runtime_seconds=12.5)) == 12.5
+    assert max_runtime_seconds_for(_args(live_demo=False, max_runtime_seconds=0.0)) == 0.0
+
+
+def test_deriv_live_stats_surface_refusal_and_stage16_result():
+    stats = SessionStats()
+
+    stats.tick()
+    stats.accumulator({
+        "tick_count": 10,
+        "min_ticks": 10,
+        "ready": True,
+        "pipeline_interval": 60.0,
+        "seconds_since_last_run": 61.0,
+    })
+    stats.pipeline("REFUSED", "risk_gate_not_passed:test")
+    stats.execution({"executed": False, "reason": "broker_refusal"})
+    stats.set_stop_reason("max_runtime_no_contract")
+
+    snapshot = stats.snapshot()
+    summary = stats.format_deriv_live_summary()
+
+    assert snapshot["ticks_received"] == 1
+    assert snapshot["pipeline_runs"] == 1
+    assert snapshot["refused"] == 1
+    assert snapshot["last_refusal_reason"] == "risk_gate_not_passed:test"
+    assert snapshot["last_execution_status"] == "failed"
+    assert snapshot["last_execution_reason"] == "broker_refusal"
+    assert "stop_reason=max_runtime_no_contract" in summary
+
+
+def test_async_tick_loop_timeout_sets_no_contract_stop_reason():
+    class NeverEndingTickLoop:
+        def __init__(self):
+            self.cancelled = False
+
+        async def run(self, **kwargs):
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    stats = SessionStats()
+    tick_loop = NeverEndingTickLoop()
+
+    result = asyncio.run(
+        run_tick_loop_until_stopped(
+            tick_loop,
+            deriv_broker=object(),
+            symbol="EURUSD",
+            max_runtime_seconds=0.01,
+            stats=stats,
+        )
+    )
+
+    assert result == "max_runtime_no_contract"
+    assert tick_loop.cancelled is True
+    assert stats.snapshot()["stop_reason"] == "max_runtime_no_contract"
+
+
+def test_async_tick_loop_timeout_handles_clean_cancellation_return():
+    class CleanStoppingTickLoop:
+        async def run(self, **kwargs):
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                return
+
+    stats = SessionStats()
+
+    result = asyncio.run(
+        run_tick_loop_until_stopped(
+            CleanStoppingTickLoop(),
+            deriv_broker=object(),
+            symbol="EURUSD",
+            max_runtime_seconds=0.01,
+            stats=stats,
+        )
+    )
+
+    assert result == "max_runtime_no_contract"
+    assert stats.snapshot()["stop_reason"] == "max_runtime_no_contract"
+
+
+def test_deriv_live_authorized_broker_refusal_does_not_write_trade_row():
+    class ReadyAccumulator:
+        min_ticks = 10
+        pipeline_interval = 60.0
+
+        def add(self, price, ts):
+            pass
+
+        def ready(self):
+            return True
+
+        def status(self):
+            return {
+                "tick_count": 10,
+                "min_ticks": 10,
+                "ready": True,
+                "pipeline_interval": 60.0,
+                "seconds_since_last_run": 61.0,
+            }
+
+        def mark_run(self):
+            pass
+
+        def to_ohlcv(self):
+            return {
+                "open": [1.1],
+                "high": [1.1],
+                "low": [1.1],
+                "close": [1.1],
+                "volume": [1],
+                "time": [1.0],
+            }
+
+    context = SimpleNamespace(
+        collapse_decision="AUTHORIZED",
+        proposal={
+            "direction": "buy",
+            "entry": 1.1,
+            "stop": 1.0,
+            "target": 1.2,
+            "size": 0.01,
+            "predicted_pnl": 0.2,
+        },
+        execution_result={},
+        stage_history=[
+            StageResult(
+                stage=PipelineStage.EXECUTION,
+                success=True,
+                output={"executed": False, "reason": "broker_refusal"},
+            )
+        ],
+    )
+    stats = SessionStats()
+    csv_buffer = io.StringIO()
+    writer = csv.DictWriter(csv_buffer, fieldnames=[
+        "time", "symbol", "direction", "entry", "stop", "target",
+        "size", "ticket", "predicted_pnl", "source",
+    ])
+    writer.writeheader()
+
+    handler = build_pipeline_handler(
+        SimpleNamespace(execute=lambda raw_data, symbol, source: context),
+        None,
+        ReadyAccumulator(),
+        stats,
+        "EURUSD",
+        "deriv",
+        csv_writer=writer,
+        live_mode=True,
+        live_broker="deriv",
+        deriv_broker_ref=SimpleNamespace(get_active_contracts=lambda: []),
+    )
+
+    handler(("deriv", {"price": 1.1}))
+
+    assert len(csv_buffer.getvalue().splitlines()) == 1
+    snapshot = stats.snapshot()
+    assert snapshot["authorized"] == 1
+    assert snapshot["last_execution_status"] == "failed"
+    assert snapshot["last_execution_reason"] == "broker_refusal"
 
 
 def _orch() -> PipelineOrchestrator:
