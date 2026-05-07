@@ -288,7 +288,18 @@ def _save_ppo_hook(hook: Any, checkpoint_path: Path, pending_path: Path) -> None
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     pending_path.parent.mkdir(parents=True, exist_ok=True)
     hook.agent.save(str(checkpoint_path))
-    pending_path.write_text(json.dumps(hook.export_pending(), indent=2, sort_keys=True), encoding="utf-8")
+    _atomic_write_json(pending_path, hook.export_pending())
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
 
 
 def feed_settlement_to_ppo(record: SettlementRecord, checkpoint_path: str | Path,

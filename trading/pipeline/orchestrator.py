@@ -102,6 +102,8 @@ class PipelineContext:
     weight_update_result: Dict = field(default_factory=dict)
     risk_check_passed: bool = False
     risk_check_message: str = ""
+    entropy_gate_passed: bool = False
+    entropy_gate_message: str = ""
     regime: Optional[Any] = None          # MarketRegime enum from detector
     regime_params: Optional[Any] = None   # RegimeParameters from detector
     action_weights: Dict = field(default_factory=dict)  # scheduler weights at execution time
@@ -273,6 +275,7 @@ class PipelineOrchestrator:
                 context.stage_history.append(
                     StageResult(stage=PipelineStage.FAILED, success=False, error=result.error)
                 )
+                self.execution_count += 1
                 self.failure_count += 1
                 self._release_execution_token(context)
                 return context
@@ -285,6 +288,7 @@ class PipelineOrchestrator:
                         StageResult(stage=PipelineStage.COMPLETED, success=True, 
                                    output={'reason': 'scheduler_refused'})
                     )
+                    self.execution_count += 1
                     self.success_count += 1
                     self._release_execution_token(context)
                     return context
@@ -1124,8 +1128,8 @@ class PipelineOrchestrator:
         if context.selected_path is None:
             return {'proposal': None}
 
-        path = context.selected_path['path']
-        first_price = path[0][1]
+        path = self._trajectory_points(context.selected_path['path'])
+        first_price = path[0][1] if len(path) > 0 else 0.0
         last_price = path[-1][1] if len(path) > 1 else first_price
 
         # Anchor entry to actual market price — trajectory coords are Riemannian,
@@ -1387,9 +1391,19 @@ class PipelineOrchestrator:
             'entropy_reason': metrics['entropy_reason'],
         }
 
-        threshold = float(getattr(self.scheduler, 'config', {}).get('max_entropy', 0.5))
+        config = getattr(self.scheduler, 'config', None)
+        if config is None:
+            threshold = 0.5
+        elif hasattr(config, 'get'):
+            threshold = float(config.get('max_entropy', 0.5))
+        else:
+            threshold = float(getattr(config, 'max_entropy', 0.5))
         passed = delta_s <= threshold
         status = "passed" if passed else "failed"
+        context.entropy_gate_passed = passed
+        context.entropy_gate_message = (
+            "passed" if passed else metrics['entropy_reason']
+        )
 
         self._audit_gate(
             "stage13_entropy",
@@ -1579,10 +1593,28 @@ class PipelineOrchestrator:
                 'reason': f'risk_gate_not_passed: {context.risk_check_message}'
             }
 
+        if not getattr(context, 'entropy_gate_passed', False):
+            reason = getattr(context, 'entropy_gate_message', '') or 'entropy_gate_not_passed'
+            logger.error("Collapse attempted without passing entropy gate — REFUSED")
+            context.collapse_decision = 'REFUSED'
+            self._audit_gate(
+                "stage15_scheduler",
+                "refused",
+                delta_s=f"{context.action_scores.get('delta_s', 1.0):.4f}",
+                reason=f"entropy_gate_not_passed:{reason}",
+                symbol=context.symbol,
+            )
+            return {
+                'decision': 'REFUSED',
+                'authorized': False,
+                'token': None,
+                'reason': f'entropy_gate_not_passed: {reason}'
+            }
+
         # Build trajectory dict for scheduler
         projected = [{
             'id': t['id'],
-            'energy': t['energy'],
+            'energy': float(t.get('energy', 0.0)),
             'action': t.get('action', 1.0),
             'operator_scores': {},
         } for t in context.admissible_paths]
@@ -1672,7 +1704,13 @@ class PipelineOrchestrator:
                 from trading.brokers.mt5_broker import MT5Order, mt5_broker as _mt5
             except Exception as exc:
                 logger.warning("Stage 16: MT5 broker unavailable: %s", exc)
-        from trading.brokers.deriv_broker import DerivBroker, DerivOrder, deriv_broker as _deriv
+
+        _deriv = None
+        try:
+            from trading.brokers.deriv_broker import DerivBroker, DerivOrder, deriv_broker as _deriv
+        except Exception as exc:
+            logger.warning("Stage 16: Deriv broker unavailable: %s", exc)
+            _deriv = None
 
         direction = context.proposal.get('direction', 'buy')
         entry     = context.proposal['entry']
@@ -1712,12 +1750,15 @@ class PipelineOrchestrator:
                 )
 
         # --- Deriv ---
-        if result is None and live_broker_mode in (None, 'deriv') and _deriv.connected:
+        if result is None and live_broker_mode in (None, 'deriv') and _deriv is not None and _deriv.connected:
             attempted_broker = True
             deriv_config = getattr(self, 'deriv_live_config', {}) or {}
             contract_type = 'CALL' if direction == 'buy' else 'PUT'
+            # Case-insensitive check for 'frx' prefix
+            symbol_lower = context.symbol[:3].lower() if len(context.symbol) >= 3 else ""
+            deriv_symbol = 'frx' + context.symbol if symbol_lower != 'frx' else context.symbol
             d_order = DerivOrder(
-                symbol='frx' + context.symbol if not context.symbol.startswith('frx') else context.symbol,
+                symbol=deriv_symbol,
                 contract_type=contract_type,
                 duration=int(deriv_config.get('duration', 5)),
                 duration_unit=str(deriv_config.get('duration_unit', 'm')),
@@ -1756,7 +1797,7 @@ class PipelineOrchestrator:
         return {'executed': True, 'order': context.execution_result}
     
     def _stage_reconciliation(self, context: PipelineContext) -> Dict:
-        """Stage 16: Compare intended vs actual execution"""
+        """Stage 17: Compare intended vs actual execution"""
         if not context.execution_result:
             context.reconciliation_status = 'no_execution'
             self._audit_gate("stage17_reconciliation", "skipped", reason="no_execution", symbol=context.symbol)
@@ -1813,7 +1854,7 @@ class PipelineOrchestrator:
         }
     
     def _stage_evidence_emission(self, context: PipelineContext) -> Dict:
-        """Stage 17: Emit cryptographic evidence"""
+        """Stage 18: Emit cryptographic evidence"""
         import hashlib
         
         evidence_data = {
@@ -1836,7 +1877,7 @@ class PipelineOrchestrator:
         return {'evidence_hash': context.evidence_hash}
     
     def _stage_weight_update(self, context: PipelineContext) -> Dict:
-        """Stage 18: Backward learning - update action weights"""
+        """Stage 19: Backward learning - update action weights"""
         if not self.use_weight_learning:
             self._audit_gate("stage19_weight_update", "skipped", reason="learning_disabled", symbol=context.symbol)
             return {'updated': False, 'reason': 'learning_disabled'}

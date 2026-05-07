@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from tachyonic_chain.audit_log import append_execution_evidence
-from trading.feedback.demo_settlement import _build_ml_artifacts
+from trading.feedback.demo_settlement import _atomic_write_json, _build_ml_artifacts
 from trading.feedback.falsification import append_falsification_evidence, score_decision
 
 logger = logging.getLogger(__name__)
@@ -349,7 +349,7 @@ def _save_ppo_hook(hook: Any, checkpoint_path: Path, pending_path: Path) -> None
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     pending_path.parent.mkdir(parents=True, exist_ok=True)
     hook.agent.save(str(checkpoint_path))
-    pending_path.write_text(json.dumps(hook.export_pending(), indent=2, sort_keys=True), encoding="utf-8")
+    _atomic_write_json(pending_path, hook.export_pending())
 
 
 def feed_deriv_settlement_to_ppo(record: DerivSettlementRecord, checkpoint_path: str | Path,

@@ -73,6 +73,33 @@ class MT5Broker:
         self.password = password or os.getenv("MT5_PASSWORD")
         self.server   = server   or os.getenv("MT5_SERVER")
         self.connected = False
+
+    @staticmethod
+    def _refusal_id(prefix: str, identifier: Any) -> str:
+        return f"{prefix}_{identifier}_{int(time.time())}"
+
+    def _require_demo_account(self, operation: str, symbol: Optional[str] = None) -> bool:
+        info = mt5.account_info()
+        if info is not None and getattr(info, "trade_mode", None) == 0:
+            return True
+
+        logger.error("MT5 %s blocked: account is not confirmed demo", operation)
+        append_execution_evidence(
+            event_type="broker_refusal",
+            execution_id=self._refusal_id("mt5_demo_guard", symbol or operation),
+            operation="live_execution",
+            symbol=symbol,
+            outcome="refused",
+            token_status="demo_account_required",
+            payload={
+                "broker": "mt5",
+                "operation": operation,
+                "login": getattr(info, "login", None),
+                "server": getattr(info, "server", None),
+                "trade_mode": getattr(info, "trade_mode", None),
+            },
+        )
+        return False
         
     def connect(self, max_retries: int = 5, retry_delay: float = 3.0) -> bool:
         """Initialize MT5 connection with retry logic"""
@@ -271,6 +298,9 @@ class MT5Broker:
             logger.error("MT5 not connected")
             return None
 
+        if not self._require_demo_account("place_order", order.symbol):
+            return None
+
         try:
             # Resolve broker-specific symbol suffix (e.g. EURUSD_r, EURUSDm, EURUSD.)
             resolved = order.symbol
@@ -353,11 +383,10 @@ class MT5Broker:
             if order.tp:
                 request["tp"] = order.tp
             
-            # Send order — retry once on transient failures (requote, price change, timeout)
+            # Send order — retry once only on unambiguous quote refresh failures.
             _TRANSIENT = {
                 mt5.TRADE_RETCODE_REQUOTE,
                 mt5.TRADE_RETCODE_PRICE_CHANGED,
-                mt5.TRADE_RETCODE_TIMEOUT,
             }
             # Pre-flight diagnostic — log terminal/account trade_allowed state
             _tinfo = mt5.terminal_info()
@@ -485,6 +514,9 @@ class MT5Broker:
             return False
 
         if not self.connected:
+            return False
+
+        if not self._require_demo_account("close_position"):
             return False
         
         try:

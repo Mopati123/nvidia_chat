@@ -9,6 +9,9 @@ Stages:
 3. Paper trading (validate performance)
 """
 
+from trading.torch_compat import prepare_torch_import
+
+prepare_torch_import()
 import torch
 import numpy as np
 from typing import Dict, List

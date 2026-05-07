@@ -3,8 +3,10 @@
 import json
 import random
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from apps.telegram.trading_live import LiveTradingSystem
 from core.authority.execution_token import issue_execution_token, issue_hft_execution_token
@@ -147,6 +149,135 @@ def test_direct_deriv_contract_refuses_missing_token_before_api_call(monkeypatch
     assert json.loads(records[-1])["outcome"] == "refused"
 
 
+def test_arbitrary_object_cannot_authorize_live_execution():
+    result = validate_token(object(), operation="live_execution")
+
+    assert not result.valid
+    assert result.reason == "unknown execution token authority"
+
+
+def test_direct_mt5_order_refuses_non_demo_account_before_order_send(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APEX_EVIDENCE_LOG", str(tmp_path / "evidence.jsonl"))
+    token = issue_execution_token("live_execution", budget=1.0)
+
+    monkeypatch.setattr(
+        mt5_module.mt5,
+        "account_info",
+        lambda: SimpleNamespace(
+            trade_mode=1,
+            login=123456,
+            server="Real-Server",
+            trade_allowed=True,
+        ),
+    )
+    monkeypatch.setattr(
+        mt5_module.mt5,
+        "symbol_info",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("symbol lookup should not run for non-demo account")
+        ),
+    )
+
+    broker = MT5Broker()
+    broker.connected = True
+    order = MT5Order(symbol="EURUSD", order_type="buy", volume=0.01)
+
+    assert broker.place_order(order, token=token) is None
+
+    records = (tmp_path / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(records[-1])["token_status"] == "demo_account_required"
+
+
+def test_direct_deriv_contract_refuses_non_vrtc_account_before_order_api(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APEX_EVIDENCE_LOG", str(tmp_path / "evidence.jsonl"))
+    token = issue_execution_token("live_execution", budget=1.0)
+
+    class RealDeriv(DerivBroker):
+        def __init__(self):
+            self.authorized = True
+
+        def get_account_info(self):
+            return {"loginid": "CR123456", "demo": False}
+
+        def _send_request(self, request):
+            raise AssertionError("Deriv order API should not run for real account")
+
+    order = DerivOrder("frxEURUSD", "CALL", 1.0, 15, "m")
+
+    assert RealDeriv().place_contract(order, token=token) is None
+
+    records = (tmp_path / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(records[-1])["token_status"] == "demo_account_required"
+
+
+def test_direct_deriv_contract_refuses_when_active_contract_exists(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APEX_EVIDENCE_LOG", str(tmp_path / "evidence.jsonl"))
+    token = issue_execution_token("live_execution", budget=1.0)
+
+    class BusyDeriv(DerivBroker):
+        def __init__(self):
+            self.authorized = True
+            self._execution_lock = __import__("threading").Lock()
+
+        def get_account_info(self):
+            return {"loginid": "VRTC123456", "demo": True}
+
+        def get_active_contracts(self):
+            return [{"contract_id": "open-1"}]
+
+        def _send_request(self, request):
+            raise AssertionError("Deriv buy API should not run with active contract")
+
+    order = DerivOrder("frxEURUSD", "CALL", 1.0, 15, "m")
+
+    assert BusyDeriv().place_contract(order, token=token) is None
+
+    records = (tmp_path / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(records[-1])["token_status"] == "active_contract_exists"
+
+
+def test_mt5_timeout_retcode_is_not_retried_without_reconciliation(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APEX_EVIDENCE_LOG", str(tmp_path / "evidence.jsonl"))
+    token = issue_execution_token("live_execution", budget=1.0)
+    calls = []
+
+    monkeypatch.setattr(
+        mt5_module.mt5,
+        "account_info",
+        lambda: SimpleNamespace(
+            trade_mode=0,
+            login=123456,
+            server="Demo-Server",
+            trade_allowed=True,
+        ),
+    )
+    monkeypatch.setattr(mt5_module.mt5, "terminal_info", lambda: SimpleNamespace(trade_allowed=True))
+    monkeypatch.setattr(mt5_module.mt5, "symbol_info", lambda _symbol: SimpleNamespace(visible=True, filling_mode=1))
+    monkeypatch.setattr(mt5_module.mt5, "symbol_info_tick", lambda _symbol: SimpleNamespace(ask=1.2, bid=1.1))
+    monkeypatch.setattr(mt5_module.mt5, "ORDER_TYPE_BUY", 0, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "ORDER_TYPE_SELL", 1, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "TRADE_ACTION_DEAL", 1, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "ORDER_TIME_GTC", 0, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "ORDER_FILLING_FOK", 0, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "ORDER_FILLING_IOC", 1, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "ORDER_FILLING_RETURN", 2, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "TRADE_RETCODE_REQUOTE", 10004, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "TRADE_RETCODE_TIMEOUT", 10012, raising=False)
+    monkeypatch.setattr(mt5_module.mt5, "TRADE_RETCODE_DONE", 10009, raising=False)
+
+    def fake_order_send(request):
+        calls.append(request)
+        return SimpleNamespace(retcode=mt5_module.mt5.TRADE_RETCODE_TIMEOUT)
+
+    monkeypatch.setattr(mt5_module.mt5, "order_send", fake_order_send)
+    broker = MT5Broker()
+    broker.connected = True
+
+    assert broker.place_order(MT5Order("EURUSD", "buy", 0.01), token=token) is None
+    assert len(calls) == 1
+
+
 def test_audit_log_hash_chains_execution_records(tmp_path: Path):
     log_path = tmp_path / "evidence.jsonl"
 
@@ -171,6 +302,20 @@ def test_audit_log_hash_chains_execution_records(tmp_path: Path):
     assert records[0]["record_hash"] == first
     assert records[1]["previous_hash"] == first
     assert records[1]["record_hash"] == second
+
+
+def test_audit_log_refuses_append_to_malformed_chain(tmp_path: Path):
+    log_path = tmp_path / "evidence.jsonl"
+    log_path.write_text("{not valid json\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid execution evidence chain"):
+        append_execution_evidence(
+            event_type="test_execution",
+            execution_id="exec_bad_tail",
+            operation="live_execution",
+            outcome="refused",
+            log_path=log_path,
+        )
 
 
 def test_token_flow_validator_accepts_direct_broker_boundaries():

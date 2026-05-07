@@ -71,6 +71,10 @@ class ExecutionTokenManager:
         token_id = hashlib.sha256(
             f"{operation}:{time.time()}:{budget}".encode()
         ).hexdigest()[:16]
+        token.token_id = token_id
+        token.signature = hashlib.sha256(
+            f"{token_id}:{operation}:{token.expiry}:{budget}".encode()
+        ).hexdigest()
         
         # Record
         record = TokenRecord(

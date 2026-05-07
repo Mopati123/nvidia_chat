@@ -8,6 +8,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, Iterator, List, Optional
 
 META = {
@@ -19,6 +20,7 @@ META = {
 
 DEFAULT_EVIDENCE_LOG = Path("logs") / "execution_evidence.jsonl"
 GENESIS_HASH = hashlib.sha256(b"GENESIS").hexdigest()
+_APPEND_LOCK = Lock()
 
 
 @dataclass
@@ -68,9 +70,12 @@ def _last_record_hash(path: Path) -> str:
         if not line.strip():
             continue
         try:
-            return str(json.loads(line).get("record_hash", ""))
-        except json.JSONDecodeError:
-            break
+            record_hash = str(json.loads(line).get("record_hash", ""))
+            if record_hash:
+                return record_hash
+            raise ValueError(f"Last audit record in {path} is missing record_hash")
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Malformed JSON tail in {path}: {exc}") from exc
     return GENESIS_HASH
 
 
@@ -165,22 +170,33 @@ def append_execution_evidence(
     path = _resolve_log_path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    record = {
-        "timestamp": time.time(),
-        "event_type": event_type,
-        "execution_id": execution_id,
-        "operation": operation,
-        "symbol": symbol,
-        "outcome": outcome,
-        "token_status": token_status,
-        "evidence_hash": evidence_hash,
-        "payload": payload or {},
-        "previous_hash": _last_record_hash(path),
-    }
-    record["record_hash"] = _canonical_hash(record)
+    with _APPEND_LOCK:
+        report = verify_execution_evidence_chain(path)
+        if not report.valid:
+            issue_text = "; ".join(
+                f"line {issue.line}: {issue.message}" if issue.line else issue.message
+                for issue in report.issues[:3]
+            )
+            raise ValueError(f"Refusing to append to invalid execution evidence chain: {issue_text}")
 
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, sort_keys=True, separators=(",", ":"), default=str))
-        handle.write("\n")
+        record = {
+            "timestamp": time.time(),
+            "event_type": event_type,
+            "execution_id": execution_id,
+            "operation": operation,
+            "symbol": symbol,
+            "outcome": outcome,
+            "token_status": token_status,
+            "evidence_hash": evidence_hash,
+            "payload": payload or {},
+            "previous_hash": _last_record_hash(path),
+        }
+        record["record_hash"] = _canonical_hash(record)
+
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True, separators=(",", ":"), default=str))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
     return record["record_hash"]

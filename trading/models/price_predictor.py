@@ -10,6 +10,9 @@ First Principles:
 - Fast inference (< 50ms) for real-time trading
 """
 
+from trading.torch_compat import prepare_torch_import
+
+prepare_torch_import()
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
