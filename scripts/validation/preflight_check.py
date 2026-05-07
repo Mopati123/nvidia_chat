@@ -7,16 +7,21 @@ import os
 import sys
 import time
 import logging
+import argparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-def check_broker_connections():
+def check_broker_connections(allow_network: bool = False):
     """Verify Deriv and MT5 connections"""
     print("\n" + "="*60)
     print("CHECK 1: Broker Connections")
     print("="*60)
+
+    if not allow_network:
+        print("[SKIP] Broker/network checks require --allow-broker-network")
+        return True
     
     from trading.brokers.deriv_broker import DerivBroker
     from trading.brokers.mt5_broker import MT5Broker
@@ -108,11 +113,15 @@ def check_risk_limits():
         return False
 
 
-def clear_stale_state():
+def clear_stale_state(allow_mutation: bool = False):
     """Clear any stale state from previous runs"""
     print("\n" + "="*60)
     print("CHECK 4: Clear Stale State")
     print("="*60)
+
+    if not allow_mutation:
+        print("[SKIP] State clearing requires --allow-state-mutation")
+        return True
     
     import shutil
     from pathlib import Path
@@ -141,11 +150,15 @@ def clear_stale_state():
     return True
 
 
-def initialize_backtest_logger():
+def initialize_backtest_logger(allow_mutation: bool = False):
     """Initialize fresh backtest logger session"""
     print("\n" + "="*60)
     print("CHECK 5: Initialize Backtest Logger")
     print("="*60)
+
+    if not allow_mutation:
+        print("[SKIP] Logger/session creation requires --allow-state-mutation")
+        return True
     
     from trading.backtest_logger import get_backtest_logger
     from datetime import datetime
@@ -164,20 +177,33 @@ def initialize_backtest_logger():
         return False
 
 
-def main():
+def main(argv=None):
     """Run all pre-flight checks"""
+    parser = argparse.ArgumentParser(description="Offline-safe pre-flight checks")
+    parser.add_argument(
+        "--allow-broker-network",
+        action="store_true",
+        help="Allow validation to connect to configured broker/demo accounts",
+    )
+    parser.add_argument(
+        "--allow-state-mutation",
+        action="store_true",
+        help="Allow validation to clear local state and create logger sessions",
+    )
+    args = parser.parse_args(argv)
+
     print("="*60)
     print("PRE-FLIGHT CHECKS - Paper Trading Demo")
     print("="*60)
     print(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Mode: PAPER TRADING (Live trading disabled)")
+    print("Mode: OFFLINE SAFE DEFAULTS (broker/state mutations opt-in)")
     
     results = {
-        'Brokers': check_broker_connections(),
+        'Brokers': check_broker_connections(args.allow_broker_network),
         'Paper Mode': check_paper_mode(),
         'Risk Limits': check_risk_limits(),
-        'State Clear': clear_stale_state(),
-        'Logger Init': initialize_backtest_logger()
+        'State Clear': clear_stale_state(args.allow_state_mutation),
+        'Logger Init': initialize_backtest_logger(args.allow_state_mutation)
     }
     
     # Summary
@@ -193,7 +219,7 @@ def main():
     
     if all_passed:
         print("\n" + "="*60)
-        print("ALL CHECKS PASSED - READY FOR PAPER TRADING")
+        print("ALL OFFLINE-SAFE CHECKS PASSED")
         print("="*60)
         return 0
     else:
