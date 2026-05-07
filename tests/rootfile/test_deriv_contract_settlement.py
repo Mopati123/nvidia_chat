@@ -14,6 +14,7 @@ from trading.feedback.deriv_settlement import (
     settle_deriv_contract,
     settle_deriv_contracts,
 )
+from trading.rl.scheduler_agent import PPOSchedulerAgent
 
 
 def _write_csv(path: Path, contract_id: str = "777") -> None:
@@ -259,3 +260,9 @@ def test_settle_deriv_contracts_feeds_ppo_when_pending_state_exists(tmp_path: Pa
     assert report.records[0].ppo_feedback_status == "transition_stored"
     assert checkpoint_path.exists()
     assert json.loads(pending_path.read_text(encoding="utf-8")) == {}
+
+    restored = PPOSchedulerAgent(device="cpu")
+    restored.load(str(checkpoint_path))
+    assert len(restored.buffer) == 1
+    assert restored.total_steps == 1
+    assert restored.recent_pnl

@@ -51,9 +51,32 @@ class DerivBroker:
         self.req_id = 0
         self.callbacks: Dict[str, Callable] = {}
         self.pending_responses: Dict[str, Dict] = {}
+        self._execution_lock = threading.Lock()
         
         # Market data cache
         self.price_cache: Dict[str, Dict] = {}
+
+    @staticmethod
+    def _refusal_id(prefix: str, identifier: Any) -> str:
+        return f"{prefix}_{identifier}_{int(time.time())}"
+
+    def _require_demo_account(self, operation: str, symbol: Optional[str] = None) -> bool:
+        info = self.get_account_info()
+        if info and info.get("demo") is True:
+            return True
+
+        loginid = info.get("loginid") if isinstance(info, dict) else None
+        logger.error("Deriv %s blocked: account is not confirmed VRTC demo", operation)
+        append_execution_evidence(
+            event_type="broker_refusal",
+            execution_id=self._refusal_id("deriv_demo_guard", symbol or operation),
+            operation="live_execution",
+            symbol=symbol,
+            outcome="refused",
+            token_status="demo_account_required",
+            payload={"broker": "deriv", "operation": operation, "loginid": loginid},
+        )
+        return False
         
     def connect(self) -> bool:
         """Connect to Deriv WebSocket API"""
@@ -335,85 +358,108 @@ class DerivBroker:
         if not self.authorized:
             logger.error("Not authorized")
             return None
-        
-        proposal = self._proposal_request(order)
-        
-        # Get proposal — retry once with 50% stake if first attempt fails
-        response = self._send_request(proposal)
-        if not response or 'proposal' not in response:
-            reduced_amount = round(order.amount * 0.5, 2)
-            if reduced_amount >= 1.0:
-                logger.warning(
-                    "Proposal failed for amount=%.2f — retrying with %.2f",
-                    order.amount, reduced_amount
-                )
-                proposal['amount'] = reduced_amount
-                order.amount = reduced_amount
-                response = self._send_request(proposal)
-            if not response or 'proposal' not in response:
-                logger.error(f"Proposal failed after size reduction: {response}")
+
+        if not self._require_demo_account("place_contract", order.symbol):
+            return None
+
+        with self._execution_lock:
+            active_contracts = self.get_active_contracts()
+            if active_contracts:
+                logger.warning("Deriv contract blocked: active contract already exists")
                 append_execution_evidence(
-                    event_type="broker_execution",
-                    execution_id=f"deriv_failed_{order.symbol}_{int(time.time())}",
+                    event_type="broker_refusal",
+                    execution_id=self._refusal_id("deriv_active_contract", order.symbol),
                     operation="live_execution",
                     symbol=order.symbol,
-                    outcome="failed",
-                    token_status="authorized",
+                    outcome="refused",
+                    token_status="active_contract_exists",
                     payload={
                         "broker": "deriv",
-                        "reason": "proposal_failed",
+                        "active_contract_count": len(active_contracts),
                         "contract_type": order.contract_type,
                         "amount": order.amount,
                     },
                 )
                 return None
-        
-        # Buy the contract
-        proposal_id = response['proposal']['id']
-        
-        buy_response = self._send_request({
-            "buy": proposal_id,
-            "price": response['proposal']['ask_price']
-        })
-        
-        if buy_response and 'buy' in buy_response:
-            contract = buy_response['buy']
-            logger.info(f"Contract bought: {order.symbol} {order.contract_type} "
-                       f"${order.amount} for {order.duration}{order.duration_unit}")
 
-            execution_result = {
-                'contract_id': contract['contract_id'],
-                'longcode': contract['longcode'],
-                'transaction_id': contract['transaction_id'],
-                'buy_price': contract['buy_price']
-            }
+            proposal = self._proposal_request(order)
+
+            # Get proposal — retry once with 50% stake if first attempt fails
+            response = self._send_request(proposal)
+            if not response or 'proposal' not in response:
+                reduced_amount = round(order.amount * 0.5, 2)
+                if reduced_amount >= 1.0:
+                    logger.warning(
+                        "Proposal failed for amount=%.2f — retrying with %.2f",
+                        order.amount, reduced_amount
+                    )
+                    proposal['amount'] = reduced_amount
+                    order.amount = reduced_amount
+                    response = self._send_request(proposal)
+                if not response or 'proposal' not in response:
+                    logger.error(f"Proposal failed after size reduction: {response}")
+                    append_execution_evidence(
+                        event_type="broker_execution",
+                        execution_id=f"deriv_failed_{order.symbol}_{int(time.time())}",
+                        operation="live_execution",
+                        symbol=order.symbol,
+                        outcome="failed",
+                        token_status="authorized",
+                        payload={
+                            "broker": "deriv",
+                            "reason": "proposal_failed",
+                            "contract_type": order.contract_type,
+                            "amount": order.amount,
+                        },
+                    )
+                    return None
+
+            # Buy the contract
+            proposal_id = response['proposal']['id']
+
+            buy_response = self._send_request({
+                "buy": proposal_id,
+                "price": response['proposal']['ask_price']
+            })
+
+            if buy_response and 'buy' in buy_response:
+                contract = buy_response['buy']
+                logger.info(f"Contract bought: {order.symbol} {order.contract_type} "
+                           f"${order.amount} for {order.duration}{order.duration_unit}")
+
+                execution_result = {
+                    'contract_id': contract['contract_id'],
+                    'longcode': contract['longcode'],
+                    'transaction_id': contract['transaction_id'],
+                    'buy_price': contract['buy_price']
+                }
+                append_execution_evidence(
+                    event_type="broker_execution",
+                    execution_id=f"deriv_{execution_result['contract_id']}",
+                    operation="live_execution",
+                    symbol=order.symbol,
+                    outcome="success",
+                    token_status="authorized",
+                    payload={"broker": "deriv", **execution_result},
+                )
+                return execution_result
+
+            logger.error(f"Buy failed: {buy_response}")
             append_execution_evidence(
                 event_type="broker_execution",
-                execution_id=f"deriv_{execution_result['contract_id']}",
+                execution_id=f"deriv_failed_{order.symbol}_{int(time.time())}",
                 operation="live_execution",
                 symbol=order.symbol,
-                outcome="success",
+                outcome="failed",
                 token_status="authorized",
-                payload={"broker": "deriv", **execution_result},
+                payload={
+                    "broker": "deriv",
+                    "reason": "buy_failed",
+                    "contract_type": order.contract_type,
+                    "amount": order.amount,
+                },
             )
-            return execution_result
-        
-        logger.error(f"Buy failed: {buy_response}")
-        append_execution_evidence(
-            event_type="broker_execution",
-            execution_id=f"deriv_failed_{order.symbol}_{int(time.time())}",
-            operation="live_execution",
-            symbol=order.symbol,
-            outcome="failed",
-            token_status="authorized",
-            payload={
-                "broker": "deriv",
-                "reason": "buy_failed",
-                "contract_type": order.contract_type,
-                "amount": order.amount,
-            },
-        )
-        return None
+            return None
     
     def get_active_contracts(self) -> List[Dict]:
         """Get list of open positions/contracts"""
@@ -484,6 +530,9 @@ class DerivBroker:
             return None
 
         if not self.authorized:
+            return None
+
+        if not self._require_demo_account("sell_contract"):
             return None
         
         response = self._send_request({

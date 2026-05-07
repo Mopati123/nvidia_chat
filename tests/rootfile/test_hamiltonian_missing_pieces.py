@@ -253,6 +253,7 @@ def test_scheduler_receives_measured_delta_s_from_context():
     context.risk_check_passed = True
     context.proposal = {"symbol": "EURUSD", "size": 0.01}
     context.admissible_paths = [{"id": "traj_a", "energy": 0.1, "action": 0.2}]
+    context.entropy_gate_passed = True
     context.action_scores["delta_s"] = 0.217
     context.action_scores["information_gain"] = 0.783
 
@@ -260,6 +261,33 @@ def test_scheduler_receives_measured_delta_s_from_context():
 
     assert result["decision"] == CollapseDecision.REFUSED.name
     assert scheduler.seen_delta_s == 0.217
+
+
+def test_scheduler_not_called_when_entropy_gate_failed():
+    class GuardedScheduler:
+        config = {"max_entropy": 0.5}
+
+        def authorize_collapse(self, **kwargs):
+            raise AssertionError("scheduler must not run after entropy refusal")
+
+    orchestrator = PipelineOrchestrator(
+        scheduler=GuardedScheduler(),
+        risk_manager=_RiskManager(),
+        use_microstructure=False,
+        use_weight_learning=False,
+    )
+    orchestrator.collapse_breaker = _PassthroughBreaker()
+
+    context = _context_with_actions([0.25, 0.25, 0.25, 0.25])
+    context.risk_check_passed = True
+    context.proposal = {"symbol": "EURUSD", "size": 0.01}
+    entropy = orchestrator._stage_entropy_gate(context)
+
+    result = orchestrator._stage_scheduler_collapse(context)
+
+    assert entropy["passed"] is False
+    assert result["authorized"] is False
+    assert result["reason"].startswith("entropy_gate_not_passed")
 
 
 def test_ramanujan_signatures_are_deterministic_behavior_families():

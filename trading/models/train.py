@@ -12,6 +12,9 @@ First Principles:
 - Conservative loss function with uncertainty calibration
 """
 
+from trading.torch_compat import prepare_torch_import
+
+prepare_torch_import()
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

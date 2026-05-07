@@ -11,11 +11,15 @@ Key Features:
 - Entropy bonus for exploration
 """
 
+from trading.torch_compat import prepare_torch_import
+
+prepare_torch_import()
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
+import os
 from typing import Dict, List, Optional, Tuple
 import logging
 
@@ -271,12 +275,17 @@ class PPOSchedulerAgent:
     
     def save(self, path: str):
         """Save agent state"""
-        torch.save({
+        checkpoint = {
             'network_state_dict': self.network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'n_updates': self.n_updates,
-            'total_steps': self.total_steps
-        }, path)
+            'total_steps': self.total_steps,
+            'recent_pnl': list(self.recent_pnl),
+            'buffer': self._export_buffer(),
+        }
+        tmp_path = f"{path}.tmp"
+        torch.save(checkpoint, tmp_path)
+        os.replace(tmp_path, path)
         logger.info(f"Agent saved to {path}")
     
     def load(self, path: str):
@@ -286,7 +295,45 @@ class PPOSchedulerAgent:
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.n_updates = checkpoint.get('n_updates', 0)
         self.total_steps = checkpoint.get('total_steps', 0)
+        self.recent_pnl = [float(value) for value in checkpoint.get('recent_pnl', [])][-100:]
+        self._import_buffer(checkpoint.get('buffer'))
         logger.info(f"Agent loaded from {path}")
+
+    def _export_buffer(self) -> Dict[str, object]:
+        """Export the current rollout buffer so pending feedback survives restart."""
+        end_idx = len(self.buffer)
+        return {
+            "buffer_size": int(self.buffer.buffer_size),
+            "state_dim": int(self.buffer.state_dim),
+            "pos": int(self.buffer.pos),
+            "full": bool(self.buffer.full),
+            "states": self.buffer.states[:end_idx].tolist(),
+            "actions": self.buffer.actions[:end_idx].tolist(),
+            "rewards": self.buffer.rewards[:end_idx].tolist(),
+            "log_probs": self.buffer.log_probs[:end_idx].tolist(),
+            "values": self.buffer.values[:end_idx].tolist(),
+            "dones": self.buffer.dones[:end_idx].tolist(),
+        }
+
+    def _import_buffer(self, payload: Optional[Dict[str, object]]) -> None:
+        if not payload:
+            return
+        try:
+            count = len(payload.get("actions", []))
+            count = min(count, self.buffer.buffer_size)
+            self.buffer.clear()
+            if count <= 0:
+                return
+            self.buffer.states[:count] = np.asarray(payload["states"][:count], dtype=np.float32)
+            self.buffer.actions[:count] = np.asarray(payload["actions"][:count], dtype=np.int64)
+            self.buffer.rewards[:count] = np.asarray(payload["rewards"][:count], dtype=np.float32)
+            self.buffer.log_probs[:count] = np.asarray(payload["log_probs"][:count], dtype=np.float32)
+            self.buffer.values[:count] = np.asarray(payload["values"][:count], dtype=np.float32)
+            self.buffer.dones[:count] = np.asarray(payload["dones"][:count], dtype=np.float32)
+            self.buffer.full = bool(payload.get("full", False)) and count >= self.buffer.buffer_size
+            self.buffer.pos = self.buffer.buffer_size if self.buffer.full else count
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("PPO rollout buffer restore failed: %s", exc)
 
 
 # Global singleton

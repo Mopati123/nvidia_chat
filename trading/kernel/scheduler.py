@@ -15,8 +15,10 @@ from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
 from .token_authority import AuthorityToken, TokenAuthority
+from trading.torch_compat import prepare_torch_import
 
 try:
+    prepare_torch_import()
     import torch
     TORCH_AVAILABLE = True
 except ImportError:
