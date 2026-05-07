@@ -292,10 +292,23 @@ class EvidenceEmitter:
     Merkle root + Ed25519 signed bundle.
     """
     
-    def __init__(self):
-        self.signer = Ed25519Signer()
+    def __init__(self, signer: Optional[Ed25519Signer] = None):
+        self.signer = signer or Ed25519Signer()
         self.anchor = TachyonicAnchor()
         self.bundles: Dict[str, EvidenceBundle] = {}
+
+    @staticmethod
+    def _signature_payload(bundle_id: str, timestamp: float, merkle_root: str) -> str:
+        """Canonical payload signed and verified for bundle identity."""
+        return json.dumps(
+            {
+                "bundle_id": bundle_id,
+                "merkle_root": merkle_root,
+                "timestamp": timestamp,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     
     def emit(self,
             execution_id: str,
@@ -316,6 +329,9 @@ class EvidenceEmitter:
         4. Anchor for reproducibility
         5. Return bundle
         """
+        # Use one timestamp for Merkle, bundle identity, and signature payload.
+        timestamp = time.time()
+
         # Build Merkle tree
         tree = MerkleTree()
         
@@ -326,24 +342,25 @@ class EvidenceEmitter:
         tree.add_leaf({"scheduler": scheduler_decision})
         tree.add_leaf(execution_result)
         tree.add_leaf({"reconciliation": reconciliation_delta})
-        tree.add_leaf({"timestamp": time.time()})
+        tree.add_leaf({"timestamp": timestamp})
         
         # Compute root
         merkle_root = tree.compute_root()
-        
-        # Sign
-        signature_data = f"{execution_id}:{merkle_root}:{time.time()}"
-        signature = self.signer.sign(signature_data)
         
         # Hash inputs
         inputs_hash = hashlib.sha256(
             json.dumps(inputs, sort_keys=True).encode()
         ).hexdigest()
-        
+
+        bundle_id = f"evidence_{execution_id}_{int(timestamp)}"
+        signature = self.signer.sign(
+            self._signature_payload(bundle_id, timestamp, merkle_root)
+        )
+
         # Create bundle
         bundle = EvidenceBundle(
-            bundle_id=f"evidence_{execution_id}_{int(time.time())}",
-            timestamp=time.time(),
+            bundle_id=bundle_id,
+            timestamp=timestamp,
             merkle_root=merkle_root,
             signature=signature,
             inputs_hash=inputs_hash,
@@ -369,8 +386,10 @@ class EvidenceEmitter:
             return False
         
         # Verify signature
-        sig_data = f"{bundle.bundle_id}:{bundle.merkle_root}:{bundle.timestamp}"
-        return self.signer.verify(sig_data, bundle.signature)
+        return self.signer.verify(
+            self._signature_payload(bundle.bundle_id, bundle.timestamp, bundle.merkle_root),
+            bundle.signature,
+        )
     
     def get_bundle(self, bundle_id: str) -> Optional[EvidenceBundle]:
         """Retrieve evidence bundle by ID"""
