@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import csv
 import io
 import json
+import sys
 from argparse import Namespace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import scripts.trading.run_demo_trading as runner
 from scripts.trading.run_demo_trading import (
     SessionStats,
+    TickAccumulator,
     build_pipeline_handler,
     deriv_live_preflight_blocker,
     deriv_symbol_for,
@@ -145,6 +150,20 @@ def test_deriv_live_demo_defaults_to_ten_minute_runtime_guard():
     assert max_runtime_seconds_for(_args(live_demo=False, max_runtime_seconds=0.0)) == 0.0
 
 
+def test_tick_accumulator_mark_run_updates_readiness_under_lock(monkeypatch):
+    accumulator = TickAccumulator(window=20, pipeline_interval=10.0, min_ticks=2)
+    accumulator.add(1.1, 1.0)
+    accumulator.add(1.2, 2.0)
+
+    monkeypatch.setattr(runner.time, "time", lambda: 100.0)
+    assert accumulator.ready() is True
+
+    accumulator.mark_run()
+
+    assert accumulator.ready() is False
+    assert accumulator.status()["seconds_since_last_run"] == 0.0
+
+
 def test_deriv_live_stats_surface_refusal_and_stage16_result():
     stats = SessionStats()
 
@@ -226,6 +245,93 @@ def test_async_tick_loop_timeout_handles_clean_cancellation_return():
 
     assert result == "max_runtime_no_contract"
     assert stats.snapshot()["stop_reason"] == "max_runtime_no_contract"
+
+
+class _TrackedOpen:
+    def __init__(self, handle):
+        self._handle = handle
+        self.closed = False
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+    def close(self):
+        self.closed = True
+        return self._handle.close()
+
+
+def _patch_runner_main_for_paper_mode(monkeypatch, tmp_path: Path, build_handler):
+    opened = []
+    real_open = builtins.open
+
+    def tracking_open(file, *args, **kwargs):
+        handle = real_open(file, *args, **kwargs)
+        if "demo_trades_" in str(file):
+            tracked = _TrackedOpen(handle)
+            opened.append(tracked)
+            return tracked
+        return handle
+
+    class FakeRiskManager:
+        max_position_size = 0.01
+
+        def get_status(self):
+            return {
+                "daily_pnl": 0.0,
+                "kill_switch": False,
+                "level": "green",
+                "daily_loss_limit": 20.0,
+                "remaining_limit": 20.0,
+            }
+
+    class FakeOrchestrator:
+        def __init__(self):
+            self.risk_manager = FakeRiskManager()
+            self._paper_mode = True
+            self.live_broker_mode = None
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["run_demo_trading.py", "--mode", "paper"])
+    monkeypatch.setattr(builtins, "open", tracking_open)
+    monkeypatch.setattr(
+        "trading.pipeline.orchestrator.PipelineOrchestrator",
+        FakeOrchestrator,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "trading.rl.scheduler_agent",
+        SimpleNamespace(PPOSchedulerAgent=lambda: (_ for _ in ()).throw(RuntimeError("ppo off"))),
+    )
+    monkeypatch.setattr(runner, "build_pipeline_handler", build_handler)
+    monkeypatch.setattr(runner, "status_printer", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner.SessionStats, "print_status", lambda *args, **kwargs: None)
+    return opened
+
+
+def test_runner_closes_trade_log_on_clean_paper_stop(monkeypatch, tmp_path):
+    def build_handler(*args, **kwargs):
+        return lambda tick: None
+
+    opened = _patch_runner_main_for_paper_mode(monkeypatch, tmp_path, build_handler)
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    runner.main()
+
+    assert opened
+    assert opened[-1].closed is True
+
+
+def test_runner_closes_trade_log_when_handler_setup_raises(monkeypatch, tmp_path):
+    def build_handler(*args, **kwargs):
+        raise RuntimeError("handler setup failed")
+
+    opened = _patch_runner_main_for_paper_mode(monkeypatch, tmp_path, build_handler)
+
+    with pytest.raises(RuntimeError, match="handler setup failed"):
+        runner.main()
+
+    assert opened
+    assert opened[-1].closed is True
 
 
 def test_deriv_live_authorized_broker_refusal_does_not_write_trade_row():

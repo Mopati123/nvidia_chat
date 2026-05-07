@@ -236,9 +236,12 @@ class TickAccumulator:
             self._ticks.append((price, ts))
 
     def ready(self) -> bool:
+        with self._lock:
+            tick_count = len(self._ticks)
+            last_run = self._last_run
         return (
-            len(self._ticks) >= self.min_ticks
-            and (time.time() - self._last_run) >= self.pipeline_interval
+            tick_count >= self.min_ticks
+            and (time.time() - last_run) >= self.pipeline_interval
         )
 
     def status(self) -> Dict[str, Any]:
@@ -274,7 +277,8 @@ class TickAccumulator:
         }
 
     def mark_run(self) -> None:
-        self._last_run = time.time()
+        with self._lock:
+            self._last_run = time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -991,113 +995,114 @@ def main():
     _log_dir.mkdir(exist_ok=True)
     _log_path = _log_dir / f"demo_trades_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
     _csv_file = open(_log_path, "w", newline="")
-    _writer = csv.DictWriter(_csv_file, fieldnames=[
-        "time", "symbol", "direction", "entry", "stop", "target",
-        "size", "ticket", "predicted_pnl", "source",
-    ])
-    _writer.writeheader()
-    logger.info("Trade log: %s", _log_path)
+    try:
+        _writer = csv.DictWriter(_csv_file, fieldnames=[
+            "time", "symbol", "direction", "entry", "stop", "target",
+            "size", "ticket", "predicted_pnl", "source",
+        ])
+        _writer.writeheader()
+        logger.info("Trade log: %s", _log_path)
 
-    # In live mode: longer pipeline interval (60s) to avoid over-trading on micro-movements
-    _pipeline_interval = 60.0 if live_mode else 5.0
-    accumulator = TickAccumulator(window=20, pipeline_interval=_pipeline_interval, min_ticks=10)
-    stats = SessionStats()
+        # In live mode: longer pipeline interval (60s) to avoid over-trading on micro-movements
+        _pipeline_interval = 60.0 if live_mode else 5.0
+        accumulator = TickAccumulator(window=20, pipeline_interval=_pipeline_interval, min_ticks=10)
+        stats = SessionStats()
 
-    pipeline_fn = build_pipeline_handler(
-        orch, ppo_hook, accumulator, stats, args.symbol, args.mode,
-        csv_writer=_writer, csv_file=_csv_file,
-        live_mode=live_mode, live_broker=live_broker,
-        mt5_broker_ref=mt5_broker if live_broker == "mt5" else None,
-        deriv_broker_ref=deriv_broker if live_broker == "deriv" else None,
-        start_equity=start_equity, max_loss=args.max_loss,
-        trade_cooldown=300.0,  # 5 min minimum between trades in live mode
-        ppo_checkpoint_path=ppo_checkpoint_path if ppo_hook else None,
-        ppo_pending_path=ppo_pending_path if ppo_hook else None,
-    )
-
-    # ------------------------------------------------------------------
-    # 5. Status printer (background thread)
-    # ------------------------------------------------------------------
-    _stopped = [False]
-    status_thread = Thread(
-        target=status_printer,
-        args=(orch, ppo_agent, stats, deriv_ok, mt5_ok, lambda: _stopped[0]),
-        daemon=True,
-    )
-    status_thread.start()
-
-    # ------------------------------------------------------------------
-    # 6. Run tick loop
-    # ------------------------------------------------------------------
-    if args.mode == "paper":
-        # Simulated tick mode — generate synthetic ticks locally
-        logger.info("Paper mode: generating simulated ticks for %s...", args.symbol)
-        import random
-
-        base_price = 1.0855
-        try:
-            while True:
-                # Random walk tick
-                base_price += random.uniform(-0.0002, 0.0002)
-                pipeline_fn(("paper", base_price))
-                time.sleep(0.05)  # 50 ms cadence → ~20 ticks/s
-        except KeyboardInterrupt:
-            pass
-    else:
-        # Real async tick loop from Deriv + MT5
-        from trading.brokers.async_tick_loop import AsyncTickLoop
-
-        tick_loop = AsyncTickLoop(
-            pipeline_fn=pipeline_fn,
-            queue_maxsize=1000,
-            deriv_poll_interval=0.005,
-            mt5_poll_interval=0.010,
+        pipeline_fn = build_pipeline_handler(
+            orch, ppo_hook, accumulator, stats, args.symbol, args.mode,
+            csv_writer=_writer, csv_file=_csv_file,
+            live_mode=live_mode, live_broker=live_broker,
+            mt5_broker_ref=mt5_broker if live_broker == "mt5" else None,
+            deriv_broker_ref=deriv_broker if live_broker == "deriv" else None,
+            start_equity=start_equity, max_loss=args.max_loss,
+            trade_cooldown=300.0,  # 5 min minimum between trades in live mode
+            ppo_checkpoint_path=ppo_checkpoint_path if ppo_hook else None,
+            ppo_pending_path=ppo_pending_path if ppo_hook else None,
         )
 
-        logger.info("Starting async tick loop for %s...", args.symbol)
-        try:
-            asyncio.run(
-                run_tick_loop_until_stopped(
-                    tick_loop,
-                    deriv_broker=deriv_broker if deriv_ok else None,
-                    mt5_broker=mt5_broker if mt5_ok else None,
-                    symbol=args.symbol,
-                    max_runtime_seconds=max_runtime_seconds,
-                    stats=stats,
-                )
+        # ------------------------------------------------------------------
+        # 5. Status printer (background thread)
+        # ------------------------------------------------------------------
+        _stopped = [False]
+        status_thread = Thread(
+            target=status_printer,
+            args=(orch, ppo_agent, stats, deriv_ok, mt5_ok, lambda: _stopped[0]),
+            daemon=True,
+        )
+        status_thread.start()
+
+        # ------------------------------------------------------------------
+        # 6. Run tick loop
+        # ------------------------------------------------------------------
+        if args.mode == "paper":
+            # Simulated tick mode — generate synthetic ticks locally
+            logger.info("Paper mode: generating simulated ticks for %s...", args.symbol)
+            import random
+
+            base_price = 1.0855
+            try:
+                while True:
+                    # Random walk tick
+                    base_price += random.uniform(-0.0002, 0.0002)
+                    pipeline_fn(("paper", base_price))
+                    time.sleep(0.05)  # 50 ms cadence → ~20 ticks/s
+            except KeyboardInterrupt:
+                pass
+        else:
+            # Real async tick loop from Deriv + MT5
+            from trading.brokers.async_tick_loop import AsyncTickLoop
+
+            tick_loop = AsyncTickLoop(
+                pipeline_fn=pipeline_fn,
+                queue_maxsize=1000,
+                deriv_poll_interval=0.005,
+                mt5_poll_interval=0.010,
             )
-        except KeyboardInterrupt:
-            stats.set_stop_reason("interrupted")
-            pass
 
-    # ------------------------------------------------------------------
-    # 7. Shutdown
-    # ------------------------------------------------------------------
-    _stopped[0] = True
-    logger.info("Shutting down...")
-    if live_mode and live_broker == "deriv" and not stats.snapshot().get("contract_observed"):
-        if not stats.snapshot().get("stop_reason"):
-            stats.set_stop_reason("runner_stopped_no_contract")
-        logger.warning("DERIV LIVE DEMO NO-CONTRACT SUMMARY | %s", stats.format_deriv_live_summary())
-    elif live_mode and live_broker == "deriv":
-        logger.info("DERIV LIVE DEMO CONTRACT SUMMARY | %s", stats.format_deriv_live_summary())
+            logger.info("Starting async tick loop for %s...", args.symbol)
+            try:
+                asyncio.run(
+                    run_tick_loop_until_stopped(
+                        tick_loop,
+                        deriv_broker=deriv_broker if deriv_ok else None,
+                        mt5_broker=mt5_broker if mt5_ok else None,
+                        symbol=args.symbol,
+                        max_runtime_seconds=max_runtime_seconds,
+                        stats=stats,
+                    )
+                )
+            except KeyboardInterrupt:
+                stats.set_stop_reason("interrupted")
+                pass
 
-    if deriv_broker and deriv_ok:
+        # ------------------------------------------------------------------
+        # 7. Shutdown
+        # ------------------------------------------------------------------
+        _stopped[0] = True
+        logger.info("Shutting down...")
+        if live_mode and live_broker == "deriv" and not stats.snapshot().get("contract_observed"):
+            if not stats.snapshot().get("stop_reason"):
+                stats.set_stop_reason("runner_stopped_no_contract")
+            logger.warning("DERIV LIVE DEMO NO-CONTRACT SUMMARY | %s", stats.format_deriv_live_summary())
+        elif live_mode and live_broker == "deriv":
+            logger.info("DERIV LIVE DEMO CONTRACT SUMMARY | %s", stats.format_deriv_live_summary())
+
+        if deriv_broker and deriv_ok:
+            try:
+                deriv_broker.disconnect()
+            except Exception:
+                pass
+        if mt5_broker and mt5_ok:
+            try:
+                mt5_broker.disconnect()
+            except Exception:
+                pass
+    finally:
         try:
-            deriv_broker.disconnect()
+            _csv_file.close()
+            logger.info("Trade log saved: %s", _log_path)
         except Exception:
             pass
-    if mt5_broker and mt5_ok:
-        try:
-            mt5_broker.disconnect()
-        except Exception:
-            pass
-
-    try:
-        _csv_file.close()
-        logger.info("Trade log saved: %s", _log_path)
-    except Exception:
-        pass
 
     print("\n" + "=" * 60)
     stats.print_status(orch, ppo_agent, deriv_ok, mt5_ok)
