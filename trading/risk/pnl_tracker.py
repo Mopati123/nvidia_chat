@@ -76,6 +76,8 @@ class DailyPnLTracker:
         self.daily_trades: List[TradeRecord] = []
         self.peak_pnl = 0.0
         self.max_drawdown = 0.0
+        self.persistence_healthy = True
+        self.persistence_error: Optional[str] = None
         
         # Running totals
         self.total_trades_all_time = 0
@@ -103,6 +105,8 @@ class DailyPnLTracker:
             try:
                 with open(state_file, 'r') as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("PnL state root must be a JSON object")
                 
                 self.daily_pnl = data.get('daily_pnl', 0.0)
                 self.peak_pnl = data.get('peak_pnl', 0.0)
@@ -130,7 +134,32 @@ class DailyPnLTracker:
                 logger.info(f"Loaded {len(self.daily_trades)} trades from {state_file}")
                 
             except Exception as e:
-                logger.error(f"Failed to load state: {e}")
+                self._mark_persistence_unhealthy(f"failed_to_load_pnl_state:{e}")
+
+    def _mark_persistence_unhealthy(self, reason: str) -> None:
+        """Fail closed when persisted PnL state cannot be trusted."""
+        self.persistence_healthy = False
+        self.persistence_error = reason
+        logger.error("PnL persistence unhealthy: %s", reason)
+        try:
+            self.risk_manager.trigger_kill_switch("pnl_persistence_unhealthy")
+        except Exception as exc:
+            logger.error("Failed to trigger risk kill switch after PnL persistence error: %s", exc)
+
+    def _ensure_persistence_healthy(self) -> None:
+        if not self.persistence_healthy:
+            raise RuntimeError(f"PnL persistence unhealthy: {self.persistence_error}")
+
+    @staticmethod
+    def _atomic_write_json(path: Path, payload: Dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        with open(tmp_path, 'w') as f:
+            json.dump(payload, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
     
     def _save_state(self):
         """Persist current state to disk"""
@@ -162,10 +191,10 @@ class DailyPnLTracker:
         }
         
         try:
-            with open(state_file, 'w') as f:
-                json.dump(data, f, indent=2)
+            self._atomic_write_json(state_file, data)
         except Exception as e:
-            logger.error(f"Failed to save state: {e}")
+            self._mark_persistence_unhealthy(f"failed_to_save_pnl_state:{e}")
+            raise
     
     def record_execution_error(self, predicted_pnl: float, realized_pnl: float):
         """Record execution error ratio into the rolling histogram."""
@@ -230,8 +259,11 @@ class DailyPnLTracker:
         }
         
         archive_file = self.data_dir / f"summary_{self.current_date.isoformat()}.json"
-        with open(archive_file, 'w') as f:
-            json.dump(summary, f, indent=2)
+        try:
+            self._atomic_write_json(archive_file, summary)
+        except Exception as e:
+            self._mark_persistence_unhealthy(f"failed_to_archive_pnl_summary:{e}")
+            raise
         
         logger.info(f"Daily summary archived: {summary}")
     
@@ -259,6 +291,7 @@ class DailyPnLTracker:
         
         Updates PnL, metrics, and checks kill switch
         """
+        self._ensure_persistence_healthy()
         self._check_daily_reset()
         
         with self.lock:
@@ -319,7 +352,9 @@ class DailyPnLTracker:
                     'total_trades': 0,
                     'win_rate': 0.0,
                     'max_drawdown': 0.0,
-                    'remaining_limit': self.risk_manager.daily_loss_limit
+                    'remaining_limit': self.risk_manager.daily_loss_limit,
+                    'persistence_healthy': self.persistence_healthy,
+                    'persistence_error': self.persistence_error,
                 }
             
             wins = [t for t in self.daily_trades if t.realized_pnl > 0]
@@ -340,7 +375,9 @@ class DailyPnLTracker:
                 'peak_pnl': self.peak_pnl,
                 'sharpe_approx': self._calculate_sharpe_approx(),
                 'remaining_limit': remaining,
-                'limit_breached': self.daily_pnl <= -self.risk_manager.daily_loss_limit
+                'limit_breached': self.daily_pnl <= -self.risk_manager.daily_loss_limit,
+                'persistence_healthy': self.persistence_healthy,
+                'persistence_error': self.persistence_error,
             }
     
     def get_trade_history(self, limit: int = 100) -> List[TradeRecord]:
