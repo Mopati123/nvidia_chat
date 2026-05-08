@@ -18,6 +18,14 @@ raw state -> geometry -> paths -> action -> projectors -> entropy
 -> scheduler -> execution -> reconciliation -> evidence -> ML feedback
 ```
 
+The lawful-collapse overlay makes that flow self-describing:
+
+```text
+raw state -> geometry -> field tensor -> paths -> action -> projectors
+-> entropy -> lambda scheduler -> execution -> reconciliation
+-> evidence -> optional QPT minting -> ML feedback
+```
+
 ## One-To-One Rootfile Map
 
 | Canon law | Existing rootfile home | Current implementation meaning |
@@ -36,6 +44,10 @@ raw state -> geometry -> paths -> action -> projectors -> entropy
 | H12 Reconciliation | Pipeline reconciliation plus MT5 and Deriv settlement modules | Intended vs actual execution is checked; realized closed-trade PnL feeds settlement and learning. |
 | H13 Evidence | `tachyonic_chain/audit_log.py`, `trading/evidence/evidence_chain.py`, audit CLIs | Runtime evidence is a SHA-256 JSONL hash chain; the separate evidence bundle path supports Merkle roots and Ed25519 signatures where used. |
 
+`core/rootfile_manifest.py` is the source of truth for law ownership,
+invariants, and allowed couplings. `tools/validate_rootfile.py` checks declared
+operator metadata against that manifest in CI.
+
 ## Active Pipeline Alignment
 
 The active `PipelineOrchestrator` runs nineteen decision stage handlers plus
@@ -46,6 +58,7 @@ because `COMPLETED` is counted as a terminal stage result.
 |---|---|
 | Data ingestion and state construction | H1 |
 | ICT extraction, liquidity field, metric, connection, curvature | H2, H3, H4 |
+| Field tensor diagnostics | H8-adjacent admissibility overlay |
 | Trajectory generation and path-family compression | H5, H6 |
 | Action evaluation, path integral, interference, path selection | H7 |
 | Proposal generation and admissibility checks | H8 |
@@ -76,6 +89,34 @@ There are two evidence layers, and they should not be conflated:
 GitHub commits then publicly anchor the code and curated reports. That is not a
 public blockchain transaction; it is public source-control anchoring layered on
 top of the local evidence hash chain.
+
+`core/orchestration/evidence.py` is the unified evidence facade. It writes to the
+runtime SHA-256 chain and records optional anchoring status. External anchoring is
+disabled by default; when enabled without a configured endpoint, the pipeline
+records `anchor_status=failed` and continues without blocking collapse handling.
+
+## Field Hamiltonian
+
+`trading/fields` and `trading/kernel/H_field.py` add a diagnostics-first field
+layer between geometry and path generation:
+
+- Maxwell tensor: electric impulse and magnetic liquidity diagnostics.
+- Minkowski causality: whether proposed displacement is reachable under the
+  current field.
+- Polarity detection: directional phase inference.
+- Magnetoelectric coupling: field strength summary.
+
+By default, the field stage records diagnostics only. Setting
+`ENABLE_FIELD_HAMILTONIAN=1` turns field inadmissibility into a hard refusal input
+before scheduler collapse. This preserves safety while allowing calibration.
+
+## QPT Minting
+
+`core/economics/qpt_token.py` is disabled unless `ENABLE_QPT=1`. When enabled, it
+mints a local `qpt_*.jsonl` record only if reconciliation is accepted,
+admissibility passed, information gain meets threshold, scheduler authority was
+present, and evidence is valid. A QPT token is therefore an artifact of proven
+collapse, not a substitute for proof.
 
 ## What We Have Now
 

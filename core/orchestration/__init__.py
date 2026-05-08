@@ -4,11 +4,15 @@ from trading.kernel.H_constraints import ConstraintHamiltonian, ConstraintViolat
 from trading.kernel.apex_engine import ApexEngine, ExecutionMode, ExecutionOutcome, ExecutionResult
 from trading.kernel.scheduler import CollapseDecision, ExecutionToken, Scheduler
 
-META = {
-    "tier": "rootfile",
-    "layer": "core.orchestration",
-    "operator_type": "orchestration_adapter",
-}
+from core.meta import OperatorMeta
+
+
+META = OperatorMeta(
+    tier="rootfile",
+    layer="core.orchestration",
+    operator_type="orchestration_adapter",
+    canonical_law="H10",
+)
 
 __all__ = [
     "ApexEngine",
