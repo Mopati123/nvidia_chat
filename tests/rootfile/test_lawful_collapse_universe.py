@@ -103,6 +103,21 @@ def test_field_tensor_is_deterministic():
     assert first["field_energy"] > 0
 
 
+def test_field_tensor_accepts_canonical_bar_list():
+    market_state = {
+        "ohlcv": [
+            {"high": 1.1010, "low": 1.0990, "close": 1.1000},
+            {"high": 1.1020, "low": 1.1000, "close": 1.1015},
+        ],
+        "microstructure": {"mid": 1.1015},
+    }
+
+    tensor = compute_maxwell_tensor(market_state, {"phi": 0.2})
+
+    assert tensor["electric_impulse"] > 0
+    assert tensor["field_energy"] > 0
+
+
 def test_causal_violation_marks_field_inadmissible():
     tensor = {"magnetic_liquidity": 0.00001, "electric_impulse": 0.00001}
     result = check_causal_reach({"entry": 1.0, "target": 2.0}, tensor)
