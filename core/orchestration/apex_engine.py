@@ -2,9 +2,13 @@
 
 from trading.kernel.apex_engine import *  # noqa: F401,F403
 
-META = {
-    "tier": "rootfile",
-    "layer": "core.orchestration",
-    "operator_type": "engine_adapter",
-}
+from core.meta import OperatorMeta
+
+
+META = OperatorMeta(
+    tier="rootfile",
+    layer="core.orchestration",
+    operator_type="engine_adapter",
+    canonical_law="H10",
+)
 

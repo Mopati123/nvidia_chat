@@ -2,9 +2,13 @@
 
 from trading.kernel.H_constraints import *  # noqa: F401,F403
 
-META = {
-    "tier": "rootfile",
-    "layer": "core.orchestration",
-    "operator_type": "constraint_adapter",
-}
+from core.meta import OperatorMeta
+
+
+META = OperatorMeta(
+    tier="rootfile",
+    layer="core.orchestration",
+    operator_type="constraint_adapter",
+    canonical_law="H8",
+)
 

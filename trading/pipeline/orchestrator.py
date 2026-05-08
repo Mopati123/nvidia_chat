@@ -10,6 +10,7 @@ Raw Data → State Construction → Path Generation → Constraint Filtering
 Each stage is a checkpointed transformation with typed inputs/outputs.
 """
 
+import os
 import time
 import logging
 import numpy as np
@@ -31,6 +32,7 @@ class PipelineStage(Enum):
     
     # Riemannian Geometry
     GEOMETRY_COMPUTATION = "geometry_computation"
+    FIELD_EVALUATION = "field_evaluation"
     
     # Path Generation
     TRAJECTORY_GENERATION = "trajectory_generation"
@@ -87,6 +89,9 @@ class PipelineContext:
     hft_signals: Dict = field(default_factory=dict)
     ict_geometry: Dict = field(default_factory=dict)
     geometry_data: Dict = field(default_factory=dict)  # Riemannian geometry
+    field_data: Dict = field(default_factory=dict)
+    field_admissible: bool = True
+    field_reason: str = ""
     trajectories: List[Dict] = field(default_factory=list)
     path_families: Dict[str, List[str]] = field(default_factory=dict)
     path_signatures: Dict[str, Dict[str, str]] = field(default_factory=dict)
@@ -99,6 +104,7 @@ class PipelineContext:
     execution_result: Dict = field(default_factory=dict)
     reconciliation_status: str = ""
     evidence_hash: str = ""
+    qpt_token_id: Optional[str] = None
     weight_update_result: Dict = field(default_factory=dict)
     risk_check_passed: bool = False
     risk_check_message: str = ""
@@ -198,6 +204,7 @@ class PipelineOrchestrator:
             PipelineStage.STATE_CONSTRUCTION: self._stage_state_construction,
             PipelineStage.ICT_EXTRACTION: self._stage_ict_extraction,
             PipelineStage.GEOMETRY_COMPUTATION: self._stage_geometry_computation,
+            PipelineStage.FIELD_EVALUATION: self._stage_field_evaluation,
             PipelineStage.TRAJECTORY_GENERATION: self._stage_trajectory_generation,
             PipelineStage.RAMANUJAN_COMPRESSION: self._stage_ramanujan_compression,
             PipelineStage.ADMISSIBILITY_FILTERING: self._stage_admissibility_filtering,
@@ -249,6 +256,7 @@ class PipelineOrchestrator:
             PipelineStage.STATE_CONSTRUCTION,
             PipelineStage.ICT_EXTRACTION,
             PipelineStage.GEOMETRY_COMPUTATION,
+            PipelineStage.FIELD_EVALUATION,
             PipelineStage.TRAJECTORY_GENERATION,
             PipelineStage.RAMANUJAN_COMPRESSION,
             PipelineStage.ADMISSIBILITY_FILTERING,
@@ -762,6 +770,37 @@ class PipelineOrchestrator:
             # Continue without geometry (graceful degradation)
             context.geometry_data = {}
             return {'geometry_computed': False, 'error': str(e)}
+
+    def _stage_field_evaluation(self, context: PipelineContext) -> Dict:
+        """Stage 4b: Field Hamiltonian diagnostics after geometry computation."""
+        from ..kernel.H_field import FieldHamiltonian
+
+        result = FieldHamiltonian().evaluate(
+            context.market_state,
+            context.geometry_data,
+            context.proposal,
+        )
+        context.field_data = result.to_dict()
+        context.field_admissible = bool(result.field_admissible)
+        context.field_reason = ",".join(result.reasons) if result.reasons else "field_admissible"
+        enabled = os.getenv("ENABLE_FIELD_HAMILTONIAN", "0") == "1"
+        status = "passed" if context.field_admissible or not enabled else "failed"
+        self._audit_gate(
+            "stage4b_field",
+            status,
+            enabled=enabled,
+            field_admissible=context.field_admissible,
+            field_reason=context.field_reason,
+            polarity=result.polarity.get("polarity"),
+            coupling_strength=f"{result.coupling.get('coupling_strength', 0.0):.6g}",
+            symbol=context.symbol,
+        )
+        return {
+            "field_evaluated": True,
+            "field_enabled": enabled,
+            "field_admissible": context.field_admissible,
+            "field_reason": context.field_reason,
+        }
     
     def _stage_trajectory_generation(self, context: PipelineContext) -> Dict:
         """Stage 5: Generate candidate trajectory families with regime-aware parameters.
@@ -1276,6 +1315,17 @@ class PipelineOrchestrator:
         if not proposal:
             self._audit_gate("stage12_admissibility", "failed", reason="no_proposal")
             return {'admissible': False, 'risk_ok': False, 'reason': 'no_proposal'}
+
+        if os.getenv("ENABLE_FIELD_HAMILTONIAN", "0") == "1" and not context.field_admissible:
+            context.risk_check_passed = False
+            reason = f"field_hamiltonian_refusal:{context.field_reason}"
+            self._audit_gate(
+                "stage12_admissibility",
+                "failed",
+                reason=reason,
+                symbol=context.symbol,
+            )
+            return {'admissible': False, 'risk_ok': False, 'reason': reason}
 
         # Π_total: path-wise step validation before any risk computation
         if context.selected_path:
@@ -1863,18 +1913,51 @@ class PipelineOrchestrator:
             'decision': context.collapse_decision,
             'execution': context.execution_result,
             'reconciliation': context.reconciliation_status,
+            'field': context.field_data,
+            'qpt_token_id': None,
         }
         
         evidence_str = str(evidence_data)
-        context.evidence_hash = hashlib.sha256(evidence_str.encode()).hexdigest()[:32]
+        provisional_hash = hashlib.sha256(evidence_str.encode()).hexdigest()[:32]
+
+        try:
+            from core.economics.qpt_token import mint_qpt_if_applicable
+            from core.orchestration.reconciliation import ReconciliationReport
+
+            report = ReconciliationReport(
+                execution_id=str(
+                    context.execution_result.get("order_id")
+                    or context.execution_result.get("ticket")
+                    or context.execution_result.get("contract_id")
+                    or provisional_hash
+                ),
+                symbol=context.symbol,
+                accepted=context.reconciliation_status == "match",
+                status=context.reconciliation_status or "unknown",
+                realized_pnl=context.execution_result.get("pnl"),
+                admissible=bool(context.risk_check_passed),
+                information_gain=float(context.action_scores.get("delta_s", 0.0) or 0.0),
+                scheduler_authorized=context.collapse_decision == "AUTHORIZED",
+                evidence_valid=bool(provisional_hash),
+                broker=context.source,
+                payload={"provisional_evidence_hash": provisional_hash},
+            )
+            context.qpt_token_id = mint_qpt_if_applicable(report)
+        except Exception as exc:
+            logger.warning("Stage 18: QPT minting skipped: %s", exc)
+            context.qpt_token_id = None
+
+        evidence_data['qpt_token_id'] = context.qpt_token_id
+        context.evidence_hash = hashlib.sha256(str(evidence_data).encode()).hexdigest()[:32]
 
         self._audit_gate(
             "stage18_evidence",
             "passed",
             evidence_hash=context.evidence_hash,
+            qpt_token_id=context.qpt_token_id,
             symbol=context.symbol,
         )
-        return {'evidence_hash': context.evidence_hash}
+        return {'evidence_hash': context.evidence_hash, 'qpt_token_id': context.qpt_token_id}
     
     def _stage_weight_update(self, context: PipelineContext) -> Dict:
         """Stage 19: Backward learning - update action weights"""

@@ -722,11 +722,11 @@ class MT5PositionCloseTracker:
             self._fire(ticket, trade_id, callback, realized)
 
     def _fetch_realized_pnl(self, ticket: int, fallback: float) -> float:
-        """Query history_deals_get for DEAL_ENTRY_OUT profit+swap. Falls back to predicted."""
+        """Return full lifecycle net PnL from MT5 history, falling back if unverified."""
         try:
             date_from = datetime.now(timezone.utc) - timedelta(days=1)
-            date_to   = datetime.now(timezone.utc) + timedelta(seconds=10)
-            deals = mt5.history_deals_get(date_from, date_to, group="*")
+            date_to   = datetime.now(timezone.utc) + timedelta(days=1)
+            deals = mt5.history_deals_get(date_from, date_to)
         except Exception as exc:
             logger.warning("MT5Tracker: history_deals_get failed ticket=%d: %s", ticket, exc)
             return fallback
@@ -737,26 +737,35 @@ class MT5PositionCloseTracker:
             )
             return fallback
 
-        DEAL_ENTRY_OUT = 1
-        closing = [d for d in deals if d.position_id == ticket and d.entry == DEAL_ENTRY_OUT]
+        deal_entry_out = 1
+        lifecycle = [d for d in deals if getattr(d, "position_id", None) == ticket]
+        closing = [d for d in lifecycle if getattr(d, "entry", None) == deal_entry_out]
         if not closing:
             logger.warning(
                 "MT5Tracker: no DEAL_ENTRY_OUT for ticket=%d — fallback $%.2f", ticket, fallback
             )
             return fallback
 
-        return float(sum(d.profit + getattr(d, 'swap', 0.0) for d in closing))
+        return float(
+            sum(
+                getattr(d, "profit", 0.0)
+                + getattr(d, "swap", 0.0)
+                + getattr(d, "commission", 0.0)
+                for d in lifecycle
+            )
+        )
 
     def _fetch_close_reason(self, ticket: int) -> str:
         """Best-effort close reason for logging. Swallows all errors."""
-        REASON_MAP = {0: "CLIENT", 1: "SL", 2: "TP", 3: "CLIENT", 4: "STOP_OUT"}
+        REASON_MAP = {0: "CLIENT", 3: "CLIENT", 4: "SL", 5: "TP"}
         try:
             date_from = datetime.now(timezone.utc) - timedelta(days=1)
-            date_to   = datetime.now(timezone.utc) + timedelta(seconds=10)
-            deals = mt5.history_deals_get(date_from, date_to, group="*")
+            date_to   = datetime.now(timezone.utc) + timedelta(days=1)
+            deals = mt5.history_deals_get(date_from, date_to)
             if deals:
                 cd = [d for d in deals if d.position_id == ticket and d.entry == 1]
                 if cd:
+                    cd.sort(key=lambda deal: getattr(deal, "time", 0))
                     return REASON_MAP.get(cd[-1].reason, str(cd[-1].reason))
         except Exception:
             pass
