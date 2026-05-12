@@ -1,0 +1,588 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "nvidia_chat",
+    "description": "Production-grade quantum physics algorithmic trading system using path integral mathematics and ICT/SMC technical analysis with cryptographic governance",
+    "languages": ["Python", "YAML", "JSON", "Markdown", "Shell"],
+    "frameworks": ["pytest", "NVIDIA CUDAToolkit", "MetaTrader5"],
+    "analyzedAt": "2026-05-11T14:03:53Z",
+    "gitCommitHash": "cf7cc81c1ccdb1600b16b9a0c0c13da116449986"
+  },
+  "nodes": [
+    {
+      "id": "file:core/meta.py",
+      "type": "file",
+      "name": "meta.py",
+      "filePath": "core/meta.py",
+      "language": "python",
+      "summary": "Core metadata and rootfile manifest system",
+      "tags": ["canonical", "metadata", "rootfile"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/rootfile_manifest.py",
+      "type": "file",
+      "name": "rootfile_manifest.py",
+      "filePath": "core/rootfile_manifest.py",
+      "language": "python",
+      "summary": "Rootfile manifest parser and validator for Hamilton canonical registry",
+      "tags": ["canonical", "rootfile", "registry"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "module:authority",
+      "type": "module",
+      "name": "Authority Module",
+      "filePath": "core/authority/",
+      "summary": "Cryptographic governance and token authorization subsystem",
+      "tags": ["governance", "security", "authorization", "canonical-hamiltonian"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/authority/token_validator.py",
+      "type": "file",
+      "name": "token_validator.py",
+      "filePath": "core/authority/token_validator.py",
+      "language": "python",
+      "summary": "Validates execution tokens and authorization before trading operations",
+      "tags": ["security", "authorization"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/authority/execution_token.py",
+      "type": "file",
+      "name": "execution_token.py",
+      "filePath": "core/authority/execution_token.py",
+      "language": "python",
+      "summary": "ExecutionToken data structure and cryptographic signing for trade authorization",
+      "tags": ["governance", "cryptography"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/authority/hft_token.py",
+      "type": "file",
+      "name": "hft_token.py",
+      "filePath": "core/authority/hft_token.py",
+      "language": "python",
+      "summary": "High-frequency trading token with optional HFT-specific constraints",
+      "tags": ["hft", "governance"],
+      "complexity": "simple"
+    },
+    {
+      "id": "module:economics",
+      "type": "module",
+      "name": "Economics Module",
+      "filePath": "core/economics/",
+      "summary": "Quantum pricing theory and option pricing models",
+      "tags": ["pricing", "economic-theory", "canonical-hamiltonian"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/economics/qpt_token.py",
+      "type": "file",
+      "name": "qpt_token.py",
+      "filePath": "core/economics/qpt_token.py",
+      "language": "python",
+      "summary": "Quantum pricing theory token and models",
+      "tags": ["pricing", "quantum-theory"],
+      "complexity": "complex"
+    },
+    {
+      "id": "module:execution",
+      "type": "module",
+      "name": "Execution Module",
+      "filePath": "core/execution/",
+      "summary": "Trade execution engine with broker integration and HFT capabilities",
+      "tags": ["execution", "brokers", "canonical-hamiltonian"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/execution/brokers.py",
+      "type": "file",
+      "name": "brokers.py",
+      "filePath": "core/execution/brokers.py",
+      "language": "python",
+      "summary": "Broker adapter and execution interface for multiple exchanges",
+      "tags": ["brokers", "execution"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/execution/hft.py",
+      "type": "file",
+      "name": "hft.py",
+      "filePath": "core/execution/hft.py",
+      "language": "python",
+      "summary": "High-frequency trading execution strategies and latency optimization",
+      "tags": ["hft", "performance"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/execution/hft_canary.py",
+      "type": "file",
+      "name": "hft_canary.py",
+      "filePath": "core/execution/hft_canary.py",
+      "language": "python",
+      "summary": "Canary order monitoring and execution safety checks",
+      "tags": ["hft", "risk-management"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "module:orchestration",
+      "type": "module",
+      "name": "Orchestration Module",
+      "filePath": "core/orchestration/",
+      "summary": "Workflow orchestration and canonical pipeline scheduling",
+      "tags": ["orchestration", "pipeline", "canonical-hamiltonian"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/orchestration/apex_engine.py",
+      "type": "file",
+      "name": "apex_engine.py",
+      "filePath": "core/orchestration/apex_engine.py",
+      "language": "python",
+      "summary": "Main ApexQuantumICT engine orchestrating the canonical pipeline",
+      "tags": ["orchestration", "main-engine"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/orchestration/constraints.py",
+      "type": "file",
+      "name": "constraints.py",
+      "filePath": "core/orchestration/constraints.py",
+      "language": "python",
+      "summary": "Constraint validation and admissibility filtering system",
+      "tags": ["constraints", "validation"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/orchestration/evidence.py",
+      "type": "file",
+      "name": "evidence.py",
+      "filePath": "core/orchestration/evidence.py",
+      "language": "python",
+      "summary": "Evidence collection and decision audit trail",
+      "tags": ["evidence", "audit"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "module:self_healing",
+      "type": "module",
+      "name": "Self-Healing Module",
+      "filePath": "core/self_healing/",
+      "summary": "Fault detection, repair planning, and self-healing mechanisms",
+      "tags": ["resilience", "self-healing", "canonical-hamiltonian"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/self_healing/perception.py",
+      "type": "file",
+      "name": "perception.py",
+      "filePath": "core/self_healing/perception.py",
+      "language": "python",
+      "summary": "System state perception and anomaly detection",
+      "tags": ["monitoring", "anomaly-detection"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/self_healing/repair_planner.py",
+      "type": "file",
+      "name": "repair_planner.py",
+      "filePath": "core/self_healing/repair_planner.py",
+      "language": "python",
+      "summary": "Repair strategy planning and decision making",
+      "tags": ["repair", "planning"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/self_healing/repair_executor.py",
+      "type": "file",
+      "name": "repair_executor.py",
+      "filePath": "core/self_healing/repair_executor.py",
+      "language": "python",
+      "summary": "Execution of repair actions and state restoration",
+      "tags": ["repair", "execution"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "module:simulation",
+      "type": "module",
+      "name": "Simulation Module",
+      "filePath": "core/simulation/",
+      "summary": "Physics-based market simulation with geodesic calculations",
+      "tags": ["simulation", "geometry", "canonical-hamiltonian"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/simulation/geometry.py",
+      "type": "file",
+      "name": "geometry.py",
+      "filePath": "core/simulation/geometry.py",
+      "language": "python",
+      "summary": "Riemannian geometry calculations and Christoffel symbol computation",
+      "tags": ["geometry", "physics"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/simulation/order_book.py",
+      "type": "file",
+      "name": "order_book.py",
+      "filePath": "core/simulation/order_book.py",
+      "language": "python",
+      "summary": "Order book simulation and matching engine",
+      "tags": ["simulation", "order-book"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:core/simulation/order_book_feeds.py",
+      "type": "file",
+      "name": "order_book_feeds.py",
+      "filePath": "core/simulation/order_book_feeds.py",
+      "language": "python",
+      "summary": "Real-time order book feed integration and live data streaming",
+      "tags": ["data", "feeds"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/ROOTFILE_HAMILTONIAN_CANON.md",
+      "type": "document",
+      "name": "ROOTFILE_HAMILTONIAN_CANON.md",
+      "filePath": "docs/ROOTFILE_HAMILTONIAN_CANON.md",
+      "summary": "Canonical mapping from lawful-collapse theory to runtime implementation",
+      "tags": ["documentation", "architecture", "canonical"],
+      "complexity": "complex"
+    },
+    {
+      "id": "document:docs/ARCHITECTURE.md",
+      "type": "document",
+      "name": "ARCHITECTURE.md",
+      "filePath": "docs/ARCHITECTURE.md",
+      "summary": "System architecture and design documentation",
+      "tags": ["documentation", "architecture"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "Project overview and quick-start guide",
+      "tags": ["documentation", "overview"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tachyonic_chain/audit_log.py",
+      "type": "file",
+      "name": "audit_log.py",
+      "filePath": "tachyonic_chain/audit_log.py",
+      "language": "python",
+      "summary": "Immutable SHA-256 audit log and evidence chain",
+      "tags": ["audit", "evidence", "security"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:tachyonic_chain/evidence.py",
+      "type": "file",
+      "name": "evidence.py",
+      "filePath": "tachyonic_chain/evidence.py",
+      "language": "python",
+      "summary": "Evidence bundle structure with optional Merkle roots and signatures",
+      "tags": ["evidence", "cryptography"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "module:taep",
+      "type": "module",
+      "name": "TAEP Module",
+      "filePath": "taep/",
+      "summary": "Trading Authority, Evidence, Performance subsystem",
+      "tags": ["compliance", "evidence", "performance"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:trading/brokers/mt5_broker.py",
+      "type": "file",
+      "name": "mt5_broker.py",
+      "filePath": "trading/brokers/mt5_broker.py",
+      "language": "python",
+      "summary": "MetaTrader 5 broker integration with real trading via MT5 terminal",
+      "tags": ["brokers", "mt5", "execution"],
+      "complexity": "complex"
+    },
+    {
+      "id": "config:config/operator_meta_schema.json",
+      "type": "config",
+      "name": "operator_meta_schema.json",
+      "filePath": "config/operator_meta_schema.json",
+      "summary": "JSON schema for operator metadata definition",
+      "tags": ["configuration", "schema"],
+      "complexity": "simple"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:core/orchestration/apex_engine.py",
+      "target": "module:authority",
+      "type": "imports",
+      "weight": 0.9,
+      "description": "Apex engine requires authorization for all operations"
+    },
+    {
+      "source": "file:core/orchestration/apex_engine.py",
+      "target": "module:execution",
+      "type": "imports",
+      "weight": 0.9,
+      "description": "Apex engine dispatches trades to execution module"
+    },
+    {
+      "source": "file:core/orchestration/apex_engine.py",
+      "target": "module:simulation",
+      "type": "imports",
+      "weight": 0.9,
+      "description": "Apex engine uses geometry and order book from simulation"
+    },
+    {
+      "source": "file:core/orchestration/apex_engine.py",
+      "target": "module:self_healing",
+      "type": "imports",
+      "weight": 0.8,
+      "description": "Apex engine integrates self-healing for resilience"
+    },
+    {
+      "source": "file:core/execution/brokers.py",
+      "target": "file:trading/brokers/mt5_broker.py",
+      "type": "imports",
+      "weight": 0.8,
+      "description": "Broker adapter uses MT5 broker for MetaTrader connections"
+    },
+    {
+      "source": "file:core/authority/token_validator.py",
+      "target": "file:core/authority/execution_token.py",
+      "type": "imports",
+      "weight": 0.9,
+      "description": "Token validator validates ExecutionToken structures"
+    },
+    {
+      "source": "file:core/orchestration/evidence.py",
+      "target": "file:tachyonic_chain/audit_log.py",
+      "type": "imports",
+      "weight": 0.8,
+      "description": "Evidence collection writes to audit log"
+    },
+    {
+      "source": "file:core/simulation/geometry.py",
+      "target": "file:core/simulation/order_book.py",
+      "type": "imports",
+      "weight": 0.7,
+      "description": "Geometry uses order book data for curvature calculation"
+    },
+    {
+      "source": "file:core/self_healing/perception.py",
+      "target": "file:core/orchestration/apex_engine.py",
+      "type": "imports",
+      "weight": 0.6,
+      "description": "Perception monitors apex engine state"
+    },
+    {
+      "source": "file:core/self_healing/repair_executor.py",
+      "target": "file:core/self_healing/repair_planner.py",
+      "type": "imports",
+      "weight": 0.8,
+      "description": "Executor follows repair plans from planner"
+    },
+    {
+      "source": "module:authority",
+      "target": "file:core/authority/token_validator.py",
+      "type": "contains",
+      "weight": 1.0,
+      "description": "Authority module contains token validator"
+    },
+    {
+      "source": "module:execution",
+      "target": "file:core/execution/brokers.py",
+      "type": "contains",
+      "weight": 1.0,
+      "description": "Execution module contains broker adapters"
+    },
+    {
+      "source": "module:execution",
+      "target": "file:core/execution/hft.py",
+      "type": "contains",
+      "weight": 1.0,
+      "description": "Execution module contains HFT strategies"
+    },
+    {
+      "source": "module:simulation",
+      "target": "file:core/simulation/geometry.py",
+      "type": "contains",
+      "weight": 1.0,
+      "description": "Simulation module contains geometry calculations"
+    },
+    {
+      "source": "document:docs/ROOTFILE_HAMILTONIAN_CANON.md",
+      "target": "file:core/meta.py",
+      "type": "documents",
+      "weight": 0.8,
+      "description": "Canonical document specifies meta.py requirements"
+    },
+    {
+      "source": "document:docs/ARCHITECTURE.md",
+      "target": "file:core/orchestration/apex_engine.py",
+      "type": "documents",
+      "weight": 0.7,
+      "description": "Architecture doc describes apex engine design"
+    },
+    {
+      "source": "file:core/execution/brokers.py",
+      "target": "file:core/authority/token_validator.py",
+      "type": "imports",
+      "weight": 0.7,
+      "description": "Broker adapter checks authorization before execution"
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:governance",
+      "name": "Governance & Authorization",
+      "description": "Cryptographic token validation and authorization subsystem that guards all trading operations",
+      "nodeIds": [
+        "module:authority",
+        "file:core/authority/token_validator.py",
+        "file:core/authority/execution_token.py",
+        "file:core/authority/hft_token.py",
+        "file:tachyonic_chain/audit_log.py"
+      ]
+    },
+    {
+      "id": "layer:orchestration",
+      "name": "Orchestration & Pipeline",
+      "description": "Canonical pipeline orchestration that coordinates data flow, state construction, geometry, trajectory generation, and decision-making",
+      "nodeIds": [
+        "file:core/orchestration/apex_engine.py",
+        "file:core/orchestration/constraints.py",
+        "file:core/orchestration/evidence.py",
+        "file:core/meta.py",
+        "file:core/rootfile_manifest.py"
+      ]
+    },
+    {
+      "id": "layer:simulation",
+      "name": "Simulation & Physics",
+      "description": "Physics-based market simulation with Riemannian geometry, geodesic calculation, and order book simulation",
+      "nodeIds": [
+        "module:simulation",
+        "file:core/simulation/geometry.py",
+        "file:core/simulation/order_book.py",
+        "file:core/simulation/order_book_feeds.py"
+      ]
+    },
+    {
+      "id": "layer:execution",
+      "name": "Execution & Trading",
+      "description": "Trade execution engine with broker integration, HFT capabilities, and canary order monitoring",
+      "nodeIds": [
+        "module:execution",
+        "file:core/execution/brokers.py",
+        "file:core/execution/hft.py",
+        "file:core/execution/hft_canary.py",
+        "file:trading/brokers/mt5_broker.py"
+      ]
+    },
+    {
+      "id": "layer:resilience",
+      "name": "Resilience & Self-Healing",
+      "description": "Fault detection, anomaly perception, repair planning, and self-healing mechanisms",
+      "nodeIds": [
+        "module:self_healing",
+        "file:core/self_healing/perception.py",
+        "file:core/self_healing/repair_planner.py",
+        "file:core/self_healing/repair_executor.py"
+      ]
+    },
+    {
+      "id": "layer:economics",
+      "name": "Economics & Pricing",
+      "description": "Quantum pricing theory and economic models for market valuation",
+      "nodeIds": [
+        "module:economics",
+        "file:core/economics/qpt_token.py"
+      ]
+    },
+    {
+      "id": "layer:documentation",
+      "name": "Documentation & Reference",
+      "description": "Architecture documentation, canonical references, and usage guides",
+      "nodeIds": [
+        "document:docs/ROOTFILE_HAMILTONIAN_CANON.md",
+        "document:docs/ARCHITECTURE.md",
+        "document:README.md"
+      ]
+    },
+    {
+      "id": "layer:compliance",
+      "name": "Compliance & Evidence",
+      "description": "Trading Authority, Evidence, and Performance subsystem for regulatory compliance",
+      "nodeIds": [
+        "module:taep",
+        "file:tachyonic_chain/evidence.py",
+        "config:config/operator_meta_schema.json"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "Project Overview",
+      "description": "Understand the ApexQuantumICT system: a quantum physics-based trading bot using path integral mathematics and ICT technical analysis",
+      "nodeIds": ["document:README.md"]
+    },
+    {
+      "order": 2,
+      "title": "Canonical Architecture",
+      "description": "Learn the overall architecture and how the canonical pipeline orchestrates trading decisions",
+      "nodeIds": ["document:docs/ARCHITECTURE.md", "file:core/meta.py"]
+    },
+    {
+      "order": 3,
+      "title": "Rootfile Hamiltonian Canon",
+      "description": "Study the lawful-collapse canon and its mapping to runtime implementation",
+      "nodeIds": ["document:docs/ROOTFILE_HAMILTONIAN_CANON.md"]
+    },
+    {
+      "order": 4,
+      "title": "Governance Layer",
+      "description": "Explore cryptographic authorization and token validation that guards all operations",
+      "nodeIds": ["module:authority", "file:core/authority/token_validator.py"]
+    },
+    {
+      "order": 5,
+      "title": "Main Orchestration Engine",
+      "description": "Dive into the apex_engine.py: the heart of the system coordinating all subsystems",
+      "nodeIds": ["file:core/orchestration/apex_engine.py"]
+    },
+    {
+      "order": 6,
+      "title": "Physics & Geometry",
+      "description": "Understand the Riemannian geometry calculations and geodesic trajectory generation",
+      "nodeIds": ["module:simulation", "file:core/simulation/geometry.py"]
+    },
+    {
+      "order": 7,
+      "title": "Trade Execution",
+      "description": "Learn how authorized trades are executed via broker adapters and HFT strategies",
+      "nodeIds": ["module:execution", "file:core/execution/brokers.py", "file:trading/brokers/mt5_broker.py"]
+    },
+    {
+      "order": 8,
+      "title": "Resilience & Self-Healing",
+      "description": "Explore the self-healing mechanisms for fault detection and recovery",
+      "nodeIds": ["module:self_healing", "file:core/self_healing/perception.py"]
+    },
+    {
+      "order": 9,
+      "title": "Evidence & Compliance",
+      "description": "Study the audit log, evidence chains, and regulatory compliance mechanisms",
+      "nodeIds": ["file:tachyonic_chain/audit_log.py", "module:taep"]
+    }
+  ]
+}

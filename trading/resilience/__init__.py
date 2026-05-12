@@ -13,6 +13,13 @@ from trading.resilience.circuit_breaker import (
     get_circuit_breaker_manager
 )
 
+from trading.resilience.checkpoints import (
+    Checkpoint,
+    load_checkpoint,
+    persist_checkpoint,
+    stable_payload_hash,
+)
+
 from trading.resilience.state_recovery import (
     StateRecovery,
     SystemState,
@@ -25,10 +32,14 @@ __all__ = [
     'CircuitBreakerConfig',
     'CircuitBreakerManager',
     'CircuitState',
+    'Checkpoint',
     'StateRecovery',
     'SystemState',
     'get_circuit_breaker',
     'get_circuit_breaker_manager',
     'get_state_recovery',
-    'graceful_shutdown_handler'
+    'graceful_shutdown_handler',
+    'load_checkpoint',
+    'persist_checkpoint',
+    'stable_payload_hash',
 ]

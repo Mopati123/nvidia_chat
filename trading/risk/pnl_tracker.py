@@ -10,7 +10,7 @@ import time
 import logging
 import numpy as np
 from collections import deque
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, date
 from threading import Lock
@@ -83,8 +83,8 @@ class DailyPnLTracker:
         self.total_trades_all_time = 0
         self.total_pnl_all_time = 0.0
         
-        # Rolling execution error histogram (last 100 trades)
-        self.execution_errors: deque = deque(maxlen=100)
+        # Rolling execution error histogram (last 1000 closed trades)
+        self.execution_errors: deque = deque(maxlen=1000)
 
         # Risk manager reference
         self.risk_manager = get_risk_manager()
@@ -198,8 +198,35 @@ class DailyPnLTracker:
     
     def record_execution_error(self, predicted_pnl: float, realized_pnl: float):
         """Record execution error ratio into the rolling histogram."""
-        ratio = abs(predicted_pnl - realized_pnl) / max(abs(predicted_pnl), 1.0)
+        self.estimate_execution_error(predicted_pnl, realized_pnl)
+
+    def estimate_execution_error(self, trade_or_prediction: Any, realized_pnl: Optional[float] = None) -> float:
+        """Record and return abs(predicted-realized)/max(abs(predicted), 1.0)."""
+        if isinstance(trade_or_prediction, (int, float)):
+            predicted = float(trade_or_prediction)
+        else:
+            if isinstance(trade_or_prediction, dict):
+                source = trade_or_prediction
+                metadata = source.get("metadata") or {}
+                getter = source.get
+            else:
+                source = trade_or_prediction
+                metadata = getattr(source, "metadata", {}) or {}
+                getter = lambda key, default=None: getattr(source, key, default)
+
+            raw_prediction = getter("predicted_pnl", None)
+            if raw_prediction is None:
+                raw_prediction = getter("predicted_energy", None)
+            if raw_prediction is None:
+                raw_prediction = metadata.get("predicted_pnl", metadata.get("predicted_energy", 0.0))
+            predicted = float(raw_prediction)
+            if realized_pnl is None:
+                realized_pnl = getter("realized_pnl", 0.0)
+
+        realized = float(realized_pnl if realized_pnl is not None else 0.0)
+        ratio = abs(predicted - realized) / max(abs(predicted), 1.0)
         self.execution_errors.append(ratio)
+        return ratio
 
     def get_divergence_stats(self) -> Dict:
         """Return mean/std/p95 of the rolling execution error histogram."""

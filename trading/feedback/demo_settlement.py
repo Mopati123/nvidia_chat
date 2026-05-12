@@ -65,6 +65,9 @@ class SettlementRecord:
     falsification_status: str = "not_scored"
     falsification_hash: Optional[str] = None
     evidence_hash: Optional[str] = None
+    execution_error_pct: Optional[float] = None
+    divergence_flagged: bool = False
+    reconciliation_hash: Optional[str] = None
 
 
 @dataclass
@@ -257,8 +260,55 @@ def append_settlement_evidence(record: SettlementRecord, evidence_log_path: str 
             "target": record.target,
             "predicted_pnl": record.predicted_pnl,
             "realized_pnl": record.realized_pnl,
+            "execution_error_pct": record.execution_error_pct,
+            "divergence_flagged": record.divergence_flagged,
             "close_reason": record.close_reason,
             "ppo_feedback_status": record.ppo_feedback_status,
+        },
+        log_path=evidence_log_path,
+    )
+
+
+def score_closed_trade_reconciliation(
+    record: SettlementRecord,
+    *,
+    threshold: float = 0.15,
+) -> float:
+    """Score predicted-vs-realized divergence for a closed MT5 trade."""
+    realized = _float(record.realized_pnl)
+    ratio = abs(record.predicted_pnl - realized) / max(abs(record.predicted_pnl), 1.0)
+    record.execution_error_pct = ratio
+    record.divergence_flagged = ratio > threshold
+    return ratio
+
+
+def append_closed_trade_reconciliation_evidence(
+    record: SettlementRecord,
+    evidence_log_path: str | Path,
+    *,
+    threshold: float = 0.15,
+) -> str:
+    """Append hash-chained closed-trade reconciliation evidence."""
+    if record.execution_error_pct is None:
+        score_closed_trade_reconciliation(record, threshold=threshold)
+
+    return append_execution_evidence(
+        event_type="closed_trade_reconciliation",
+        execution_id=f"reconciled_mt5_{record.ticket}",
+        operation="closed_trade_reconciliation",
+        symbol=record.symbol,
+        outcome="flagged" if record.divergence_flagged else "passed",
+        token_status="mt5_history_verified",
+        payload={
+            "broker": "mt5",
+            "ticket": record.ticket,
+            "predicted_pnl": record.predicted_pnl,
+            "realized_pnl": record.realized_pnl,
+            "execution_error_pct": record.execution_error_pct,
+            "threshold": threshold,
+            "divergence_flagged": record.divergence_flagged,
+            "close_reason": record.close_reason,
+            "source": record.source,
         },
         log_path=evidence_log_path,
     )
@@ -397,6 +447,7 @@ def settle_demo_trades(
                     ppo_checkpoint_path,
                     ppo_pending_path,
                 )
+                score_closed_trade_reconciliation(record)
                 record.evidence_hash = append_settlement_evidence(record, evidence_log_path)
                 falsification = score_decision(
                     "AUTHORIZED",
@@ -413,6 +464,10 @@ def settle_demo_trades(
                 record.falsification_status = falsification.classification
                 record.falsification_hash = append_falsification_evidence(
                     falsification,
+                    evidence_log_path,
+                )
+                record.reconciliation_hash = append_closed_trade_reconciliation_evidence(
+                    record,
                     evidence_log_path,
                 )
                 append_settlement_record(record, ledger_path)

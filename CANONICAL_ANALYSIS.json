@@ -1,0 +1,1359 @@
+{
+  "metadata": {
+    "project": {
+      "name": "nvidia_chat",
+      "description": "ApexQuantumICT: Quantum-geometric market analysis with canonical rootfile architecture",
+      "type": "quantitative_trading_system",
+      "framework": "Python-based with NVIDIA CUDA integration",
+      "analyzedAt": "2026-05-11T00:00:00Z",
+      "gitCommit": "cf7cc81c1ccdb1600b16b9a0c0c13da116449986",
+      "architectureModel": "Rootfile-First with 13 Canonical Hamiltonians",
+      "keyDocuments": [
+        "docs/ROOTFILE_HAMILTONIAN_CANON.md",
+        "docs/ARCHITECTURE.md",
+        "docs/DEVELOPER_GUIDE.md"
+      ]
+    },
+    "analysisScope": {
+      "focus": "Rootfile irreducible canonical hamiltonians and orchestration",
+      "depth": "thorough",
+      "components_analyzed": 13,
+      "directories_examined": 18,
+      "files_examined": 42
+    }
+  },
+  "canonicalHamiltonians": [
+    {
+      "id": "H1",
+      "name": "State Space",
+      "description": "Raw market data becomes typed runtime state. External inputs (MT5, Deriv, TradingView) are normalized into canonical market state representation (OHLCV, microstructure, symbol, source, stage context).",
+      "tier": "irreducible",
+      "directory": "trading/pipeline",
+      "layer": "Data Preparation",
+      "keyFiles": [
+        "trading/pipeline/orchestrator.py",
+        "trading/pipeline/_rootfile_enforcement.py",
+        "data_core/ingestion/__init__.py"
+      ],
+      "implementations": [
+        {
+          "component": "PipelineContext",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Canonical data structure that flows through entire pipeline, maintaining typed state at each stage"
+        },
+        {
+          "component": "MarketDataFeed",
+          "file": "data_core/ingestion/__init__.py",
+          "description": "State preparation adapter for normalized market data ingestion"
+        },
+        {
+          "component": "Stage: DATA_INGESTION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "First pipeline stage, loads and validates raw market data"
+        }
+      ],
+      "dependencies": ["trading.brokers", "data_core"],
+      "allowedCouplings": ["H2", "H5"],
+      "invariants": [
+        "state_exists_before_execution",
+        "external_data_never_executes_trades",
+        "all_state_normalized_to_canonical_form"
+      ],
+      "exports": [
+        "PipelineContext",
+        "market_state dict with (price, time, liquidity coordinates)",
+        "symbol, source, timestamp"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "H2",
+      "name": "Geometry - Liquidity Field & Metric",
+      "description": "Liquidity structure from ICT patterns becomes metric tensor on Riemannian manifold. The scalar field ϕ(p,t) encodes resistance as curvature: high ϕ = high resistance, low ϕ = easy flow.",
+      "tier": "irreducible",
+      "directory": "trading/geometry",
+      "layer": "Market Manifold Characterization",
+      "keyFiles": [
+        "trading/geometry/liquidity_field.py",
+        "trading/geometry/metric.py",
+        "trading/geometry/connection.py",
+        "trading/geometry/curvature.py"
+      ],
+      "implementations": [
+        {
+          "component": "LiquidityField",
+          "file": "trading/geometry/liquidity_field.py",
+          "description": "Scalar field ϕ(p,t) = Σ[weights × ict_features]. Combines order block density, liquidity pools, FVGs, spread, session penalties. Foundation for metric and connection."
+        },
+        {
+          "component": "MetricTensor",
+          "file": "trading/geometry/metric.py",
+          "description": "Conformal metric ds² = e^(2ϕ)(dp² + dt²). Maps liquidity field into Riemannian geometry."
+        },
+        {
+          "component": "Stage: ICT_EXTRACTION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Extracts ICT geometry (order blocks, FVGs, liquidity pools) from market state"
+        },
+        {
+          "component": "Stage: GEOMETRY_COMPUTATION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Computes liquidity field, metric tensor, connection, and curvature"
+        }
+      ],
+      "dependencies": ["H1", "trading.microstructure"],
+      "allowedCouplings": ["H3", "H4", "H5"],
+      "invariants": [
+        "geometry_is_derived_from_state",
+        "field_conformal_metric_verified",
+        "no_geometry_without_valid_state"
+      ],
+      "exports": [
+        "LiquidityField ϕ(p,t)",
+        "MetricTensor ds²",
+        "field_data dict",
+        "geometry_data dict"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "H3",
+      "name": "Connection - Christoffel Symbols",
+      "description": "Liquidity gradients bend trajectory evolution. Connection coefficients Γⁱⱼₖ encode how paths curve through the liquidity field, transforming straight lines into geodesics that follow market structure.",
+      "tier": "irreducible",
+      "directory": "trading/geometry",
+      "layer": "Market Manifold Characterization",
+      "keyFiles": [
+        "trading/geometry/connection.py",
+        "trading/geometry/geodesic.py"
+      ],
+      "implementations": [
+        {
+          "component": "ChristoffelSymbols",
+          "file": "trading/geometry/connection.py",
+          "description": "Γⁱⱼₖ = ∂ϕ/∂xⁱ terms. Bends candidate trajectories through liquidity gradients. 2D case with price and time coordinates."
+        },
+        {
+          "component": "GeodesicCorrection",
+          "file": "trading/geometry/geodesic.py",
+          "description": "Applies geodesic deviation equation d²xⁱ/dλ² + Γⁱⱼₖ(dxʲ/dλ)(dxᵏ/dλ) = 0 to trajectory seeds"
+        }
+      ],
+      "dependencies": ["H2"],
+      "allowedCouplings": ["H4", "H5"],
+      "invariants": [
+        "connection_depends_on_metric_derivatives",
+        "no_connection_without_field",
+        "geodesic_corrected_before_path_generation"
+      ],
+      "exports": [
+        "Christoffel symbols",
+        "geodesic-corrected trajectory seeds"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "H4",
+      "name": "Curvature - Regime Classification",
+      "description": "Gaussian curvature K classifies market regime: K>0 (basin/attractor), K≈0 (flat/trend), K<0 (saddle/breakout). Determines path selection bias and entry zone affinity.",
+      "tier": "irreducible",
+      "directory": "trading/geometry",
+      "layer": "Market Manifold Characterization",
+      "keyFiles": [
+        "trading/geometry/curvature.py"
+      ],
+      "implementations": [
+        {
+          "component": "GaussianCurvature",
+          "file": "trading/geometry/curvature.py",
+          "description": "K = -e^(-2ϕ) · Δϕ. Computes Laplacian of liquidity field. Returns regime classification (BASIN/FLAT/SADDLE/TRANSITION)."
+        },
+        {
+          "component": "RegimeDetector",
+          "file": "trading/geometry/curvature.py",
+          "description": "Maps K values to market regimes and adjusts path integral weights accordingly"
+        }
+      ],
+      "dependencies": ["H2", "H3"],
+      "allowedCouplings": ["H5", "H7"],
+      "invariants": [
+        "curvature_reports_regime_stress",
+        "regime_stable_across_short_timeframes",
+        "curvature_informs_action_weights"
+      ],
+      "exports": [
+        "Gaussian curvature K",
+        "regime classification",
+        "regime parameters for action weighting"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "H5",
+      "name": "Path Space - Trajectory Generation",
+      "description": "Candidate market futures are generated as N trajectories through state space via RK4 integration. Each seed is corrected by geodesic deviation, then evolved with 4th-order Runge-Kutta under Hamiltonian dynamics. Action S[γ] is computed for each path.",
+      "tier": "irreducible",
+      "directory": "trading/path_integral",
+      "layer": "Proposal Generation",
+      "keyFiles": [
+        "trading/path_integral/trajectory_generator.py"
+      ],
+      "implementations": [
+        {
+          "component": "Trajectory",
+          "file": "trading/path_integral/trajectory_generator.py",
+          "description": "Data class representing single candidate path: (time, price) points, energy, action, operator scores, predicted PnL"
+        },
+        {
+          "component": "EpsilonCalibrator",
+          "file": "trading/path_integral/trajectory_generator.py",
+          "description": "Bisection calibration of effective Planck constant ℏ to target ESS (Effective Sample Size) ≈ 0.5"
+        },
+        {
+          "component": "PathIntegralOperator",
+          "file": "trading/path_integral/trajectory_generator.py",
+          "description": "Computes action S[γ] = ∫L dt and weights trajectories via exp(-S[γ]/ℏ) Wick rotation"
+        },
+        {
+          "component": "Stage: TRAJECTORY_GENERATION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Creates N candidate trajectories with geodesic-corrected seeds"
+        }
+      ],
+      "dependencies": ["H1", "H2", "H3", "H4"],
+      "allowedCouplings": ["H6", "H7", "H8"],
+      "invariants": [
+        "future_paths_precede_selection",
+        "all_trajectories_have_valid_action",
+        "trajectories_use_geodesic_corrections"
+      ],
+      "exports": [
+        "Trajectory objects with action and energy",
+        "trajectory list",
+        "weighted_trajectories"
+      ],
+      "mathematicalBasis": "Feynman path integral with Wick rotation: P[γ] ∝ exp(-S[γ]/ℏ)",
+      "complexity": "complex"
+    },
+    {
+      "id": "H6",
+      "name": "Ramanujan Compression - Path Family Signatures",
+      "description": "Candidate paths compress into deterministic behavior families using v1 Ramanujan signatures (liquidity, time, entry, risk, topology). Reduces exploration space from N trajectories to K families with shared characteristics.",
+      "tier": "irreducible",
+      "directory": "trading/pipeline",
+      "layer": "Proposal Generation",
+      "keyFiles": [
+        "trading/pipeline/orchestrator.py"
+      ],
+      "implementations": [
+        {
+          "component": "Stage: RAMANUJAN_COMPRESSION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Groups trajectories into deterministic families using path signature hashing"
+        },
+        {
+          "component": "PathSignature",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Deterministic v1 signature based on: liquidity profile, time-to-target, entry zone, risk geometry, topological class"
+        }
+      ],
+      "dependencies": ["H5"],
+      "allowedCouplings": ["H7", "H8"],
+      "invariants": [
+        "path_families_are_deterministic",
+        "signature_determinism_verified",
+        "compression_preserves_trajectory_diversity"
+      ],
+      "exports": [
+        "path_families dict",
+        "path_signatures dict",
+        "family representatives"
+      ],
+      "futureWork": "Deepen signatures with richer ICT lineage and empirical family scoring",
+      "complexity": "moderate"
+    },
+    {
+      "id": "H7",
+      "name": "Action - Cost & Scoring",
+      "description": "Paths receive weighted cost across four dimensions: liquidity resistance S_L, time-to-target S_T, entry-zone quality S_E, and risk geometry S_R. Composite action score determines proposal ranking.",
+      "tier": "irreducible",
+      "directory": "trading/action",
+      "layer": "Proposal Generation",
+      "keyFiles": [
+        "trading/action/upgraded_action_curvature.py",
+        "trading/action/upgraded_components.py"
+      ],
+      "implementations": [
+        {
+          "component": "ActionEvaluator",
+          "file": "trading/action/upgraded_action_curvature.py",
+          "description": "Computes S[γ] = w_L·S_L + w_T·S_T + w_E·S_E + w_R·S_R for each trajectory"
+        },
+        {
+          "component": "Stage: ACTION_EVALUATION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Evaluates actions and assigns operator scores to all trajectories"
+        },
+        {
+          "component": "Stage: PATH_INTEGRAL",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Applies path integral weighting and interference selection"
+        }
+      ],
+      "dependencies": ["H5", "H4"],
+      "allowedCouplings": ["H8", "H9"],
+      "invariants": [
+        "action_scores_are_deterministic",
+        "no_action_without_valid_trajectories",
+        "action_weights_sum_to_one"
+      ],
+      "actionWeights": {
+        "liquidity_S_L": "w_L - field resistance integral",
+        "time_S_T": "w_T - session timing cost",
+        "entry_S_E": "w_E - price level quality",
+        "risk_S_R": "w_R - stop/target geometry"
+      },
+      "exports": [
+        "action_scores dict",
+        "weighted trajectories",
+        "ranked path proposals"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "H8",
+      "name": "Admissibility - Constraint Projectors",
+      "description": "Forbidden proposals are refused before collapse. Risk manager, constraint Hamiltonian, and admissibility gates reject paths violating risk limits, session constraints, regime conditions, or kernel laws. Refusal produces evidence without reaching scheduler.",
+      "tier": "irreducible",
+      "directory": "trading/risk",
+      "layer": "Orchestration & Validation",
+      "keyFiles": [
+        "trading/risk/risk_manager.py",
+        "trading/kernel/H_constraints.py",
+        "core/orchestration/constraints.py"
+      ],
+      "implementations": [
+        {
+          "component": "ProductionRiskManager",
+          "file": "trading/risk/risk_manager.py",
+          "description": "Enforces daily loss limits, position sizing, max positions per symbol, correlated exposure, kill switch"
+        },
+        {
+          "component": "ConstraintHamiltonian",
+          "file": "trading/kernel/H_constraints.py",
+          "description": "Projects proposed actions onto admissible subspace defined by risk levels (GREEN/YELLOW/RED/KILL)"
+        },
+        {
+          "component": "RiskCheck dataclass",
+          "file": "trading/risk/risk_manager.py",
+          "description": "Result of risk check: passed bool, level (RiskLevel enum), message, metric, value, limit"
+        },
+        {
+          "component": "Stage: ADMISSIBILITY_FILTERING",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Early filtering stage before entropy gate"
+        },
+        {
+          "component": "Stage: ADMISSIBILITY_CHECK",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Final admissibility check before entropy gate and scheduler"
+        }
+      ],
+      "dependencies": ["H5", "H7"],
+      "allowedCouplings": ["H9", "H10"],
+      "invariants": [
+        "forbidden_paths_do_not_reach_scheduler",
+        "all_refusals_emit_evidence",
+        "admissibility_failures_logged_and_auditable"
+      ],
+      "riskLevels": {
+        "GREEN": "Normal operation",
+        "YELLOW": "Warning, monitor closely",
+        "RED": "Critical, block new trades",
+        "KILL": "Emergency stop all"
+      },
+      "exports": [
+        "admissible_paths list",
+        "risk_check_passed bool",
+        "risk_check_message string"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "H9",
+      "name": "Entropy Gate - Information Gain",
+      "description": "Information gain is measured before scheduler authority collapses the wave function. Gate measures prior path uncertainty, posterior action-weight uncertainty, and mutual information. Threshold must be exceeded to reach scheduler.",
+      "tier": "irreducible",
+      "directory": "trading/pipeline",
+      "layer": "Orchestration & Validation",
+      "keyFiles": [
+        "trading/pipeline/orchestrator.py"
+      ],
+      "implementations": [
+        {
+          "component": "Stage: ENTROPY_GATE",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Measures ΔS = H_posterior - H_prior + I(trajectory, weights). Blocks collapse if ΔS < threshold."
+        },
+        {
+          "component": "EntropyCalculator",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Computes prior uncertainty (uniform distribution over trajectories), posterior uncertainty (after action weighting), and mutual information"
+        }
+      ],
+      "dependencies": ["H8"],
+      "allowedCouplings": ["H10"],
+      "invariants": [
+        "entropy_gate_precedes_scheduler",
+        "information_gain_must_exceed_threshold",
+        "entropy_measurements_are_logged"
+      ],
+      "entropyMetrics": {
+        "H_prior": "Uncertainty before action weighting",
+        "H_posterior": "Uncertainty after action weighting",
+        "information_gain": "ΔS = H_prior - H_posterior",
+        "threshold": "Empirically calibrated against 300-shadow/forward proof set"
+      },
+      "exports": [
+        "entropy_gate_passed bool",
+        "entropy_gate_message string",
+        "information_gain float"
+      ],
+      "futureWork": "Calibrate threshold empirically against production data",
+      "complexity": "moderate"
+    },
+    {
+      "id": "H10",
+      "name": "Scheduler Authority - Token Issuance",
+      "description": "The scheduler is the sole authority that may issue execution tokens. No other component self-authorizes collapse. Token minting is gated by prior constraints, admissibility, entropy, and regime checks. Represents the authoritative collapse decision point.",
+      "tier": "irreducible",
+      "directory": "core/orchestration",
+      "layer": "Authority & Orchestration",
+      "keyFiles": [
+        "trading/kernel/scheduler.py",
+        "core/orchestration/scheduler.py",
+        "core/authority/execution_token.py",
+        "core/authority/token_validator.py"
+      ],
+      "implementations": [
+        {
+          "component": "Scheduler",
+          "file": "trading/kernel/scheduler.py",
+          "description": "Master scheduler that mints execution tokens. Sole authority for collapse decision. Maintains token manager and can revoke tokens."
+        },
+        {
+          "component": "ExecutionToken",
+          "file": "core/authority/execution_token.py",
+          "description": "Canonical token facade over TAEP and trading scheduler tokens. Contains operation, budget, expiry_duration, constraints metadata."
+        },
+        {
+          "component": "TokenAuthority",
+          "file": "trading/kernel/token_authority.py",
+          "description": "Manages token lifecycle: issuance, validation, revocation. Tracks budget and scope."
+        },
+        {
+          "component": "Stage: SCHEDULER_COLLAPSE",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Invokes scheduler to authorize selected trajectory and mint execution token"
+        },
+        {
+          "component": "authorize_collapse adapter",
+          "file": "core/orchestration/scheduler.py",
+          "description": "Explicit H10 law adapter over Scheduler.authorize_collapse()"
+        }
+      ],
+      "dependencies": ["H9"],
+      "allowedCouplings": ["H11", "H13"],
+      "invariants": [
+        "no_operator_self_authorizes_collapse",
+        "scheduler_is_sole_token_issuer",
+        "token_minting_logged_with_conditions",
+        "token_expiry_enforced_on_execution"
+      ],
+      "tokenProperties": {
+        "operation": "Type of execution (shadow/live/hft)",
+        "budget": "Capital authorization limit",
+        "expiry_duration": "Seconds until token expires",
+        "constraints": "Risk, regime, session constraints"
+      },
+      "exports": [
+        "ExecutionToken with scheduler authority",
+        "collapse_decision string",
+        "execution_token object"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "H11",
+      "name": "Collapse/Execution - Authorized State Changes",
+      "description": "Authorized proposals become controlled side effects. Execution boundary (shadow, live, HFT, broker) validates token before issuing broker calls. Failed token validation emits refusal evidence without executing trade.",
+      "tier": "irreducible",
+      "directory": "core/execution",
+      "layer": "Execution",
+      "keyFiles": [
+        "core/execution/shadow.py",
+        "core/execution/live.py",
+        "core/execution/hft.py",
+        "core/execution/brokers.py",
+        "trading/kernel/apex_engine.py",
+        "core/orchestration/apex_engine.py"
+      ],
+      "implementations": [
+        {
+          "component": "execute_shadow_authorized",
+          "file": "core/execution/shadow.py",
+          "description": "Token-gated shadow execution boundary. Validates token before calling ShadowTradingLoop."
+        },
+        {
+          "component": "ShadowExecution",
+          "file": "trading/shadow/shadow_trading_loop.py",
+          "description": "Paper trading execution on demo accounts (no real capital)"
+        },
+        {
+          "component": "ApexEngine",
+          "file": "trading/kernel/apex_engine.py",
+          "description": "Master orchestrator that wires canonical loop, state machine validates transitions, emits evidence"
+        },
+        {
+          "component": "ApexEngine adapter",
+          "file": "core/orchestration/apex_engine.py",
+          "description": "Rootfile adapter for canonical Apex engine orchestration"
+        },
+        {
+          "component": "EngineState state machine",
+          "file": "trading/kernel/apex_engine.py",
+          "description": "Explicit 7-state machine: IDLE → CONSTRAINED → COLLAPSED → EXECUTING → RECONCILED → EVIDENCED → IDLE. Each transition validated."
+        },
+        {
+          "component": "Stage: EXECUTION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Executes authorized token-gated broker call"
+        }
+      ],
+      "dependencies": ["H10", "H12"],
+      "allowedCouplings": ["H13"],
+      "invariants": [
+        "execution_requires_valid_token",
+        "no_execution_without_scheduler_token",
+        "refusal_evidence_emitted_on_invalid_token",
+        "state_transitions_validated_before_effect"
+      ],
+      "executionModes": {
+        "SHADOW": "Paper trading, no real capital",
+        "LIVE": "Real capital at risk",
+        "HFT": "High-frequency scoped execution"
+      },
+      "stateMachine": {
+        "IDLE": "No execution in progress",
+        "CONSTRAINED": "Constraint projectors evaluated",
+        "COLLAPSED": "Scheduler authorized collapse",
+        "EXECUTING": "Broker call in progress",
+        "RECONCILED": "Post-collapse reconciliation done",
+        "EVIDENCED": "Cryptographic evidence emitted"
+      },
+      "exports": [
+        "ExecutionResult with outcome, token, trajectory, evidence_hash",
+        "execution_result dict"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "H12",
+      "name": "Reconciliation - Outcome Validation",
+      "description": "Broker reality reconciles intended and realized state. Compares proposal expectations with actual fills, prices, timestamps. Realized closed-trade PnL feeds settlement and learning. Falsification scoring for research purposes.",
+      "tier": "irreducible",
+      "directory": "core/orchestration",
+      "layer": "Settlement & Learning",
+      "keyFiles": [
+        "core/orchestration/reconciliation.py",
+        "trading/feedback",
+        "scripts/trading/settle_demo_trades",
+        "scripts/trading/settle_deriv_contracts"
+      ],
+      "implementations": [
+        {
+          "component": "ReconciliationReport",
+          "file": "core/orchestration/reconciliation.py",
+          "description": "Canonical reconciliation summary: broker, accepted bool, status, realized_pnl, evidence_valid, admissible, information_gain, scheduler_authorized"
+        },
+        {
+          "component": "summarize_settlement_report",
+          "file": "core/orchestration/reconciliation.py",
+          "description": "Converts MT5/Deriv settlement report objects into canonical ReconciliationReport"
+        },
+        {
+          "component": "SettlementBroker adapters",
+          "file": "scripts/trading/settle_demo_trades, settle_deriv_contracts",
+          "description": "MT5 and Deriv settlement bridges. Extract realized PnL from closed positions/contracts."
+        },
+        {
+          "component": "Stage: RECONCILIATION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Reconciles intended vs actual execution, feeds realized PnL to settlement and learning"
+        }
+      ],
+      "dependencies": ["H11"],
+      "allowedCouplings": ["H13"],
+      "invariants": [
+        "realized_outcomes_drive_feedback",
+        "reconciliation_uses_broker_truth",
+        "closed_positions_not_floating_pnl",
+        "settlement_before_ml_update"
+      ],
+      "settlementPaths": {
+        "MT5_demo": {
+          "path": "scripts/trading/settle_demo_trades",
+          "data_source": "realized position history",
+          "note": "Use closed positions, not floating open PnL"
+        },
+        "Deriv_demo": {
+          "path": "scripts/trading/settle_deriv_contracts",
+          "data_source": "closed contract profit/loss",
+          "note": "Use closed contract P/L, not proposal-time payout estimates"
+        }
+      },
+      "exports": [
+        "ReconciliationReport",
+        "reconciliation_status string",
+        "realized_pnl float"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "H13",
+      "name": "Evidence - Hash-Chained Audit Log",
+      "description": "Every collapse or refusal leaves verifiable evidence. SHA-256 JSONL hash chain (runtime execution evidence) plus optional Merkle roots and Ed25519 signatures (evidence bundles). GitHub commits anchor code and curated reports. No execution unauditable.",
+      "tier": "irreducible",
+      "directory": "tachyonic_chain",
+      "layer": "Evidence & Auditability",
+      "keyFiles": [
+        "tachyonic_chain/audit_log.py",
+        "tachyonic_chain/evidence.py",
+        "trading/evidence/evidence_chain.py",
+        "core/orchestration/evidence.py"
+      ],
+      "implementations": [
+        {
+          "component": "append_execution_evidence",
+          "file": "tachyonic_chain/audit_log.py",
+          "description": "SHA-256 hash-chained JSONL record. Each record stores previous_hash, canonical payload, record_hash. Maintains GENESIS_HASH and sequential integrity."
+        },
+        {
+          "component": "iter_execution_evidence",
+          "file": "tachyonic_chain/audit_log.py",
+          "description": "Iterator over JSONL audit log. Validates hash chain on read."
+        },
+        {
+          "component": "EvidenceEvent",
+          "file": "core/orchestration/evidence.py",
+          "description": "Canonical evidence event: event_type, execution_id, operation, payload, symbol, outcome, token_status"
+        },
+        {
+          "component": "emit_evidence",
+          "file": "core/orchestration/evidence.py",
+          "description": "Unified H13 evidence facade. Appends to hash chain, includes optional anchor status (disabled by default)"
+        },
+        {
+          "component": "EvidenceBundle",
+          "file": "trading/evidence/evidence_chain.py",
+          "description": "Optional evidence bundles with Merkle roots and Ed25519 signatures for optional public anchoring"
+        },
+        {
+          "component": "Stage: EVIDENCE_EMISSION",
+          "file": "trading/pipeline/orchestrator.py",
+          "description": "Appends execution result to evidence chain with all decision data"
+        }
+      ],
+      "dependencies": ["H11", "H12"],
+      "allowedCouplings": [],
+      "invariants": [
+        "evidence_is_hash_chained",
+        "no_execution_without_evidence",
+        "hash_chain_immutable_after_write",
+        "all_refusals_logged_with_reason"
+      ],
+      "evidenceLayers": {
+        "runtime_execution": {
+          "type": "SHA-256 JSONL hash chain",
+          "file": "logs/execution_evidence.jsonl",
+          "proves": "Each execution and refusal with canonical payload"
+        },
+        "optional_bundles": {
+          "type": "Merkle roots + Ed25519 signatures",
+          "file": "trading/evidence/evidence_chain.py",
+          "proves": "Bundle-level integrity when enabled"
+        },
+        "public_anchor": {
+          "type": "GitHub commits",
+          "proves": "Code version and curated reports are publicly anchored"
+        }
+      },
+      "anchoringConfig": {
+        "default": "disabled",
+        "enabledBy": "ENABLE_ANCHORING=1",
+        "endpoint": "APEX_ANCHOR_ENDPOINT env var",
+        "blockingBehavior": "Non-blocking; records anchor_status=failed but continues"
+      },
+      "exports": [
+        "evidence_hash string (SHA-256)",
+        "EvidenceEvent",
+        "audit log JSONL records"
+      ],
+      "complexity": "moderate"
+    }
+  ],
+  "layerArchitecture": [
+    {
+      "name": "Data Preparation",
+      "description": "Ingest and normalize external market data into canonical state vector",
+      "hamiltonians": ["H1"],
+      "keyDirectories": ["data_core", "trading/pipeline"],
+      "responsibility": "Ensure all external inputs (MT5, Deriv, TradingView) are normalized to canonical form before geometry computation"
+    },
+    {
+      "name": "Market Manifold Characterization",
+      "description": "Compute Riemannian geometry: liquidity field, metric, connection, curvature. Classify market regime.",
+      "hamiltonians": ["H2", "H3", "H4"],
+      "keyDirectories": ["trading/geometry", "trading/microstructure"],
+      "responsibility": "Transform ICT structures into differential geometry that governs path integral weightings"
+    },
+    {
+      "name": "Proposal Generation",
+      "description": "Generate candidate market futures via path integral, compress into families, compute action scores",
+      "hamiltonians": ["H5", "H6", "H7"],
+      "keyDirectories": ["trading/path_integral", "trading/action", "core/simulation"],
+      "responsibility": "Create N diverse trajectories, compress via Ramanujan signatures, score via weighted action functional"
+    },
+    {
+      "name": "Orchestration & Validation",
+      "description": "Apply constraints, reject forbidden proposals, measure entropy, enforce admissibility before collapse",
+      "hamiltonians": ["H8", "H9"],
+      "keyDirectories": ["trading/risk", "core/orchestration", "trading/kernel"],
+      "responsibility": "Guard proposal space: risk checks, constraint projectors, entropy gate. No forbidden paths reach scheduler."
+    },
+    {
+      "name": "Authority & Execution",
+      "description": "Scheduler authorizes collapse and mints execution tokens. Execution boundaries validate tokens before side effects.",
+      "hamiltonians": ["H10", "H11"],
+      "keyDirectories": ["core/authority", "core/execution", "core/orchestration"],
+      "responsibility": "Enforce token-gated execution: scheduler is sole authority, all execution boundaries validate, refusal evidence emitted on denial"
+    },
+    {
+      "name": "Settlement & Learning",
+      "description": "Reconcile broker reality with proposals, realize PnL, feed learning pipeline",
+      "hamiltonians": ["H12"],
+      "keyDirectories": ["trading/feedback", "scripts/trading"],
+      "responsibility": "Bridge broker asynchronous settlement back to learning: use realized closed-position PnL, not floating estimates"
+    },
+    {
+      "name": "Evidence & Auditability",
+      "description": "Emit hash-chained evidence for every execution and refusal. Support public anchoring.",
+      "hamiltonians": ["H13"],
+      "keyDirectories": ["tachyonic_chain", "trading/evidence"],
+      "responsibility": "All runtime decisions recorded in durable, auditable form. Prove every collapse and refusal."
+    }
+  ],
+  "dataFlow": [
+    {
+      "from": "H1",
+      "to": "H2",
+      "mechanism": "PipelineContext.market_state dict",
+      "description": "Normalized market state (price, time, liquidity coordinates) flows to geometry layer",
+      "dataStructure": "Dict with OHLCV, microstructure, symbol, timestamp"
+    },
+    {
+      "from": "H2",
+      "to": "H3",
+      "mechanism": "LiquidityField ϕ(p,t) and MetricTensor ds²",
+      "description": "Liquidity field values and metric tensor passed to connection layer for Christoffel symbol computation",
+      "dataStructure": "Float scalars and 2x2 tensor components"
+    },
+    {
+      "from": "H3",
+      "to": "H4",
+      "mechanism": "MetricTensor derivatives",
+      "description": "Metric derivatives (∂ϕ/∂p, ∂ϕ/∂t) used to compute Gaussian curvature K",
+      "dataStructure": "Scalar and 2D gradient vectors"
+    },
+    {
+      "from": "H4",
+      "to": "H5",
+      "mechanism": "Regime classification and action weights",
+      "description": "Market regime (BASIN/FLAT/SADDLE/TRANSITION) informs trajectory seed selection and weights",
+      "dataStructure": "Regime enum and weight dict"
+    },
+    {
+      "from": "H2",
+      "to": "H5",
+      "mechanism": "Geodesic-corrected trajectory seeds",
+      "description": "Christoffel symbols bend trajectory seeds; seeds evolved via RK4 to generate paths",
+      "dataStructure": "List of (time, price) tuples with connection corrections"
+    },
+    {
+      "from": "H5",
+      "to": "H6",
+      "mechanism": "Trajectory list",
+      "description": "All N trajectories compressed into K family representatives using Ramanujan signatures",
+      "dataStructure": "List[Trajectory] → path_families dict, path_signatures dict"
+    },
+    {
+      "from": "H5",
+      "to": "H7",
+      "mechanism": "Trajectory with energy and action",
+      "description": "Trajectories' energy components feed into action cost computation S[γ]",
+      "dataStructure": "Trajectory.energy dict and path geometry"
+    },
+    {
+      "from": "H4",
+      "to": "H7",
+      "mechanism": "Regime-adjusted action weights",
+      "description": "Regime classification adjusts w_L, w_T, w_E, w_R weights for action scoring",
+      "dataStructure": "action_weights dict mapped to PipelineContext.regime"
+    },
+    {
+      "from": "H7",
+      "to": "H8",
+      "mechanism": "Ranked proposals with action scores",
+      "description": "Action-scored proposals passed to risk manager and constraint projectors for admissibility filtering",
+      "dataStructure": "List[Dict] with action_score and operator_scores"
+    },
+    {
+      "from": "H8",
+      "to": "H9",
+      "mechanism": "Admissible proposals only",
+      "description": "Only proposals passing risk and constraint checks reach entropy gate",
+      "dataStructure": "admissible_paths list, risk_check_passed bool"
+    },
+    {
+      "from": "H9",
+      "to": "H10",
+      "mechanism": "Entropy gate decision",
+      "description": "If information gain exceeds threshold, pass selected trajectory to scheduler for authorization",
+      "dataStructure": "entropy_gate_passed bool, information_gain float"
+    },
+    {
+      "from": "H10",
+      "to": "H11",
+      "mechanism": "ExecutionToken",
+      "description": "Scheduler mints execution token and passes to execution boundary",
+      "dataStructure": "ExecutionToken with operation, budget, constraints, expiry"
+    },
+    {
+      "from": "H11",
+      "to": "H12",
+      "mechanism": "Execution result and timestamp",
+      "description": "Shadow/live execution result (fills, prices, timing) passed to reconciliation",
+      "dataStructure": "Dict with execution_result, fills, execution_time_ms"
+    },
+    {
+      "from": "H12",
+      "to": "H13",
+      "mechanism": "ReconciliationReport",
+      "description": "Settlement result (accepted, realized_pnl, evidence_valid) appended to evidence chain",
+      "dataStructure": "ReconciliationReport and EvidenceEvent"
+    },
+    {
+      "from": "H10",
+      "to": "H13",
+      "mechanism": "Token issuance event",
+      "description": "Scheduler's token mint decision logged with conditions and authority state",
+      "dataStructure": "EvidenceEvent with token_status"
+    },
+    {
+      "from": "H8",
+      "to": "H13",
+      "mechanism": "Refusal evidence",
+      "description": "Risk or admissibility failures emit refusal evidence without reaching scheduler",
+      "dataStructure": "EvidenceEvent with outcome='refused', token_status='not_applicable'"
+    }
+  ],
+  "pipelineArchitecture": {
+    "name": "20-Stage Canonical Pipeline",
+    "description": "Active PipelineOrchestrator with 19 decision stage handlers plus completion/failure terminal states",
+    "stages": [
+      {
+        "sequence": 1,
+        "name": "DATA_INGESTION",
+        "hamiltonian": "H1",
+        "description": "Load raw market data from MT5, Deriv, or replay sources"
+      },
+      {
+        "sequence": 2,
+        "name": "STATE_CONSTRUCTION",
+        "hamiltonian": "H1",
+        "description": "Normalize to canonical market state (OHLCV, microstructure)"
+      },
+      {
+        "sequence": 3,
+        "name": "ICT_EXTRACTION",
+        "hamiltonian": "H2",
+        "description": "Extract ICT geometry (order blocks, FVGs, liquidity pools)"
+      },
+      {
+        "sequence": 4,
+        "name": "GEOMETRY_COMPUTATION",
+        "hamiltonian": "H2",
+        "description": "Compute liquidity field ϕ, metric tensor ds²"
+      },
+      {
+        "sequence": 5,
+        "name": "FIELD_EVALUATION",
+        "hamiltonian": "H2,H3,H4",
+        "description": "Maxwell tensor diagnostics, Minkowski causality, polarity detection"
+      },
+      {
+        "sequence": 6,
+        "name": "TRAJECTORY_GENERATION",
+        "hamiltonian": "H5",
+        "description": "Generate N candidate futures via RK4, geodesic-corrected"
+      },
+      {
+        "sequence": 7,
+        "name": "RAMANUJAN_COMPRESSION",
+        "hamiltonian": "H6",
+        "description": "Group trajectories into deterministic behavior families"
+      },
+      {
+        "sequence": 8,
+        "name": "ACTION_EVALUATION",
+        "hamiltonian": "H7",
+        "description": "Compute action S[γ] = w_L·S_L + w_T·S_T + w_E·S_E + w_R·S_R"
+      },
+      {
+        "sequence": 9,
+        "name": "PATH_INTEGRAL",
+        "hamiltonian": "H7",
+        "description": "Weight trajectories via exp(-S[γ]/ℏ), apply ε-calibration"
+      },
+      {
+        "sequence": 10,
+        "name": "INTERFERENCE_SELECTION",
+        "hamiltonian": "H7",
+        "description": "Select top-ranked path via path integral weights"
+      },
+      {
+        "sequence": 11,
+        "name": "PATH_SELECTION",
+        "hamiltonian": "H7",
+        "description": "Finalize selected trajectory for proposal generation"
+      },
+      {
+        "sequence": 12,
+        "name": "ADMISSIBILITY_FILTERING",
+        "hamiltonian": "H8",
+        "description": "Early risk and constraint filtering"
+      },
+      {
+        "sequence": 13,
+        "name": "PROPOSAL_GENERATION",
+        "hamiltonian": "H7",
+        "description": "Package selected trajectory into execution proposal"
+      },
+      {
+        "sequence": 14,
+        "name": "ADMISSIBILITY_CHECK",
+        "hamiltonian": "H8",
+        "description": "Final admissibility gate before entropy"
+      },
+      {
+        "sequence": 15,
+        "name": "ENTROPY_GATE",
+        "hamiltonian": "H9",
+        "description": "Measure ΔS and verify information gain > threshold"
+      },
+      {
+        "sequence": 16,
+        "name": "SCHEDULER_COLLAPSE",
+        "hamiltonian": "H10",
+        "description": "Scheduler authorizes collapse and mints execution token"
+      },
+      {
+        "sequence": 17,
+        "name": "EXECUTION",
+        "hamiltonian": "H11",
+        "description": "Token-validated broker execution (shadow/live/HFT)"
+      },
+      {
+        "sequence": 18,
+        "name": "RECONCILIATION",
+        "hamiltonian": "H12",
+        "description": "Reconcile intended vs realized, extract closed PnL"
+      },
+      {
+        "sequence": 19,
+        "name": "EVIDENCE_EMISSION",
+        "hamiltonian": "H13",
+        "description": "Append to hash-chained audit log"
+      },
+      {
+        "sequence": 20,
+        "name": "WEIGHT_UPDATE",
+        "hamiltonian": "H13",
+        "description": "Optional ML feedback: update path integral weights"
+      }
+    ],
+    "terminalStates": [
+      {
+        "name": "COMPLETED",
+        "description": "Successful end-to-end execution with evidence"
+      },
+      {
+        "name": "FAILED",
+        "description": "Execution failed; evidence records reason"
+      }
+    ]
+  },
+  "entryPoints": [
+    {
+      "name": "PipelineOrchestrator.execute()",
+      "file": "trading/pipeline/orchestrator.py",
+      "description": "Main entry point: accepts market data dict, runs full 20-stage pipeline, returns PipelineContext with all decision checkpoints",
+      "input": "Dict with symbol, timestamp, OHLCV data, source",
+      "output": "PipelineContext with all stage results, evidence_hash, and final decision"
+    },
+    {
+      "name": "ApexEngine.execute_canonical_cycle()",
+      "file": "trading/kernel/apex_engine.py",
+      "description": "Lower-level entry point: explicit 7-step cycle with state machine validation. Used when finer control over orchestration is needed.",
+      "input": "ExecutionMode, PipelineContext or proposal dict",
+      "output": "ExecutionResult with outcome, token, evidence_hash"
+    },
+    {
+      "name": "backend_api routes",
+      "file": "backend_api/dashboard.py, backend_api/telegram.py",
+      "description": "API layer entry points for user commands and observation. Read state without bypassing authority.",
+      "input": "HTTP requests or Telegram commands",
+      "output": "JSON responses or Telegram messages"
+    },
+    {
+      "name": "Scheduler.authorize_collapse()",
+      "file": "trading/kernel/scheduler.py",
+      "description": "Scheduler authority entry point: gates token issuance with decision logic and constraints",
+      "input": "Trajectory dict, context metadata",
+      "output": "ExecutionToken or refusal"
+    }
+  ],
+  "keyComponents": {
+    "dataStructures": [
+      {
+        "name": "PipelineContext",
+        "file": "trading/pipeline/orchestrator.py",
+        "description": "Master context object that flows through entire pipeline. Maintains typed state at each stage: market_state, ict_geometry, trajectories, proposals, execution_result, evidence_hash. Attached to every stage result.",
+        "keyFields": [
+          "symbol, timestamp, source (metadata)",
+          "market_state dict (H1 output)",
+          "geometry_data dict (H2-H4 output)",
+          "trajectories list (H5 output)",
+          "path_families, path_signatures dicts (H6 output)",
+          "action_scores dict (H7 output)",
+          "admissible_paths list (H8 output)",
+          "entropy_gate_passed bool (H9 output)",
+          "collapse_decision str, execution_token (H10 output)",
+          "execution_result dict (H11 output)",
+          "reconciliation_status str (H12 output)",
+          "evidence_hash str (H13 output)"
+        ]
+      },
+      {
+        "name": "Trajectory",
+        "file": "trading/path_integral/trajectory_generator.py",
+        "description": "Represents single candidate market future: sequence of (time, price) points, action, energy, operator scores. Core object of H5 path space.",
+        "keyFields": [
+          "id (unique identifier)",
+          "path (list of (t, p) tuples)",
+          "energy (kinetic + potential)",
+          "action (S[γ] value)",
+          "operator_scores (dict with H-values)",
+          "action_score (composite)",
+          "predicted_pnl (float)"
+        ]
+      },
+      {
+        "name": "ExecutionToken",
+        "file": "core/authority/execution_token.py",
+        "description": "Canonical authority facade over TAEP and trading tokens. Stores operation, budget, expiry_duration, constraints. Required for execution boundaries.",
+        "keyFields": [
+          "operation (shadow/live/hft)",
+          "budget (capital authorized)",
+          "expiry_duration (seconds)",
+          "constraints (risk/regime/session dict)",
+          "issued_at (timestamp)",
+          "issuer_signature (if applicable)"
+        ]
+      },
+      {
+        "name": "EvidenceEvent",
+        "file": "core/orchestration/evidence.py",
+        "description": "Canonical event emitted to H13 hash chain. Records decision point (execution, refusal, token mint) with all relevant metadata.",
+        "keyFields": [
+          "event_type (execution/refusal/token_mint)",
+          "execution_id (unique run ID)",
+          "operation (description)",
+          "payload (decision metadata dict)",
+          "symbol, outcome, token_status"
+        ]
+      },
+      {
+        "name": "ReconciliationReport",
+        "file": "core/orchestration/reconciliation.py",
+        "description": "Canonical H12 output: summarizes broker settlement reconciliation for QPT and evidence layers.",
+        "keyFields": [
+          "broker (MT5/Deriv/...)",
+          "accepted (bool)",
+          "status (string)",
+          "realized_pnl (float or None)",
+          "evidence_valid, admissible, scheduler_authorized (bools)",
+          "information_gain (float)"
+        ]
+      }
+    ],
+    "orchestrators": [
+      {
+        "name": "PipelineOrchestrator",
+        "file": "trading/pipeline/orchestrator.py",
+        "description": "Main orchestrator: wires 20-stage pipeline, validates checkpoints, handles failures. Primary entry point for full execution.",
+        "responsibilities": [
+          "Load and stage raw data through all 20 stages",
+          "Validate inputs/outputs at each checkpoint",
+          "Route failures and refusals to evidence chain",
+          "Maintain PipelineContext throughout execution",
+          "Return evidence-backed decision"
+        ]
+      },
+      {
+        "name": "ApexEngine",
+        "file": "trading/kernel/apex_engine.py",
+        "description": "Master engine orchestrator: explicit state machine, 7-step cycle, canonical execution model. Lower-level control point.",
+        "responsibilities": [
+          "Enforce EngineState transitions (IDLE → ... → EVIDENCED)",
+          "Validate token-gated execution",
+          "Emit refusal evidence on invalid token",
+          "Coordinate with scheduler, constraints, evidence"
+        ]
+      },
+      {
+        "name": "Scheduler",
+        "file": "trading/kernel/scheduler.py",
+        "description": "Authority orchestrator: sole token issuer, collapse decision gatekeeper. Central point of authorization.",
+        "responsibilities": [
+          "Mint execution tokens on authorized proposals",
+          "Revoke tokens if conditions change",
+          "Record token decisions with conditions",
+          "Integrate with constraint and risk layers"
+        ]
+      }
+    ],
+    "authorities": [
+      {
+        "name": "TokenAuthority",
+        "file": "trading/kernel/token_authority.py",
+        "description": "Token lifecycle manager: issuance, validation, revocation. Enforces token expiry and scope.",
+        "keyMethods": [
+          "issue_token(operation, budget, expiry_duration, constraints)",
+          "validate_token(token) -> bool",
+          "revoke_token(token_id)",
+          "token_is_expired(token) -> bool"
+        ]
+      },
+      {
+        "name": "ProductionRiskManager",
+        "file": "trading/risk/risk_manager.py",
+        "description": "H8 authority: enforces daily loss limits, position sizing, kill switch. Guards admissibility.",
+        "keyMethods": [
+          "check_daily_loss(pnl) -> RiskCheck",
+          "check_position_size(size) -> RiskCheck",
+          "check_correlated_exposure(positions) -> RiskCheck",
+          "emergency_kill_switch()",
+          "current_risk_level() -> RiskLevel"
+        ]
+      }
+    ],
+    "validators": [
+      {
+        "name": "validate_token()",
+        "file": "core/authority/token_validator.py",
+        "description": "Single canonical execution-boundary validation entrypoint. All execution boundaries call this before side effects.",
+        "responsibility": "Reject proposals without valid, non-expired tokens. Emit refusal evidence."
+      },
+      {
+        "name": "validate_rootfile()",
+        "file": "tools/validate_rootfile.py",
+        "description": "CI validator: checks operator metadata against core/rootfile_manifest.py. Enforces canonical law ownership and allowed couplings.",
+        "responsibility": "Verify code conforms to declared law positions and invariants"
+      }
+    ]
+  },
+  "dependencies": {
+    "internalDependencies": [
+      {
+        "from": "trading/pipeline",
+        "to": ["trading/geometry", "trading/path_integral", "trading/action", "trading/risk", "core/orchestration"],
+        "reason": "Pipeline orchestrator imports all stage handlers"
+      },
+      {
+        "from": "core/orchestration",
+        "to": ["trading/kernel", "core/authority", "core/execution", "tachyonic_chain"],
+        "reason": "Orchestration layer adapts and coordinates lower-level components"
+      },
+      {
+        "from": "core/execution",
+        "to": ["core/authority", "trading/shadow", "trading/brokers", "tachyonic_chain"],
+        "reason": "Execution boundaries validate tokens and emit evidence"
+      },
+      {
+        "from": "core/authority",
+        "to": ["trading/kernel", "taep/scheduler"],
+        "reason": "Authority facade wraps existing token implementations"
+      },
+      {
+        "from": "trading/kernel",
+        "to": ["trading/risk", "taep/hamiltonians"],
+        "reason": "Scheduler integrates with constraints and total Hamiltonian"
+      }
+    ],
+    "externalDependencies": [
+      {
+        "package": "numpy",
+        "usedIn": ["trading/geometry", "trading/path_integral", "taep/hamiltonians"],
+        "reason": "Numerical computation for field, trajectory, and Hamiltonian calculations"
+      },
+      {
+        "package": "pandas",
+        "usedIn": ["data_core/ingestion", "trading/data"],
+        "reason": "OHLCV data structures and time series operations"
+      },
+      {
+        "package": "tensorflow/torch",
+        "usedIn": ["trading/rl", "trading/models", "taep/core"],
+        "reason": "ML models and reinforcement learning for adaptive weights"
+      },
+      {
+        "package": "MetaTrader5 (MT5 SDK)",
+        "usedIn": ["trading/brokers", "scripts/trading"],
+        "reason": "MT5 broker integration for demo execution and settlement"
+      },
+      {
+        "package": "DerivAPI",
+        "usedIn": ["trading/brokers", "scripts/trading"],
+        "reason": "Deriv broker integration for contracts and settlement"
+      }
+    ]
+  },
+  "validationRules": {
+    "canonicalLawOwnership": {
+      "rule": "Every operator must declare @declare_operator(META) with canonical_law",
+      "enforcement": "tools/validate_rootfile.py with --strict-missing flag",
+      "violationPenalty": "CI failure; operator not recognized as rootfile-tier"
+    },
+    "allowedCouplings": {
+      "rule": "Hamiltonians may only import from their declared allowed_couplings",
+      "enforcement": "tools/validate_rootfile.py checks import directions",
+      "violationPenalty": "CI failure; architectural violation detected"
+    },
+    "tokenRequirement": {
+      "rule": "All execution boundaries must validate token before side effects",
+      "enforcement": "core.authority.token_validator.validate_token() must be called",
+      "violationPenalty": "Refusal evidence emitted; execution refused; error logged"
+    },
+    "evidenceEmission": {
+      "rule": "Every collapse and refusal must emit evidence to hash chain",
+      "enforcement": "core.orchestration.evidence.emit_evidence() in all paths",
+      "violationPenalty": "Audit trail broken; execution unauditable"
+    },
+    "noSelfAuthorization": {
+      "rule": "No operator may mint its own execution token",
+      "enforcement": "Scheduler is sole issuer; token_validator gates execution",
+      "violationPenalty": "Access denied; evidence logged; operator may be disabled"
+    }
+  },
+  "futureWork": [
+    {
+      "hamiltonian": "H6",
+      "item": "Deepen Ramanujan signatures with richer ICT lineage and empirical family scoring",
+      "rationale": "Current v1 uses deterministic hash; future versions can incorporate learned path behavior"
+    },
+    {
+      "hamiltonian": "H9",
+      "item": "Calibrate entropy threshold empirically against 300-shadow/forward proof set",
+      "rationale": "Information-gain threshold currently qualitative; needs production data calibration"
+    },
+    {
+      "hamiltonian": "H13",
+      "item": "Implement public-chain notarization for optional evidence anchoring",
+      "rationale": "Current implementation only supports optional external endpoints; blockchain anchoring is separate explicit feature"
+    },
+    {
+      "system": "overall",
+      "item": "Second guarded Deriv demo contract where settlement returns PPO feedback",
+      "rationale": "Current proof: single MT5 and single Deriv canary; next target is production-ready learning feedback loop"
+    }
+  ],
+  "knownLimitations": [
+    {
+      "component": "H6 Ramanujan compression",
+      "limitation": "v1 signatures are deterministic but not adaptive",
+      "mitigation": "Future work: empirical family scoring based on realized trajectory outcomes"
+    },
+    {
+      "component": "H9 Entropy gate",
+      "limitation": "Threshold is currently qualitative, not empirically calibrated",
+      "mitigation": "Production tuning against realized information-gain distributions"
+    },
+    {
+      "component": "H13 Evidence anchoring",
+      "limitation": "Public-chain notarization is not implemented; local hash chain only",
+      "mitigation": "Optional external endpoint (currently disabled by default for offline safety)"
+    },
+    {
+      "component": "Settlement path",
+      "limitation": "Broker settlement is asynchronous; may be delayed relative to execution",
+      "mitigation": "Reconciliation waits for settlement; evidence records timing; ML feedback waits for closure"
+    }
+  ],
+  "configuration": {
+    "environmentVariables": [
+      {
+        "name": "ENABLE_FIELD_HAMILTONIAN",
+        "default": "0",
+        "description": "When 1, field inadmissibility becomes hard refusal before scheduler. Default is diagnostics-only."
+      },
+      {
+        "name": "ENABLE_QPT",
+        "default": "0",
+        "description": "When 1, enables QPT token minting on successful reconciliation with valid evidence and information gain"
+      },
+      {
+        "name": "ENABLE_ANCHORING",
+        "default": "0",
+        "description": "When 1, attempts external evidence anchoring. Non-blocking: records anchor_status=failed but continues."
+      },
+      {
+        "name": "APEX_ANCHOR_ENDPOINT",
+        "default": "",
+        "description": "External anchoring endpoint URL (only used if ENABLE_ANCHORING=1)"
+      },
+      {
+        "name": "APEX_EVIDENCE_LOG",
+        "default": "logs/execution_evidence.jsonl",
+        "description": "Path to hash-chained execution evidence log"
+      }
+    ],
+    "runtimeModes": [
+      {
+        "name": "Shadow (default)",
+        "description": "Paper trading on demo accounts. No real capital at risk. Full pipeline executes; evidence logged.",
+        "tokenBudget": "unlimited"
+      },
+      {
+        "name": "Live",
+        "description": "Real capital at risk. Same pipeline but with live broker execution. Requires explicit authorization.",
+        "tokenBudget": "limited by daily_loss_limit, position_size limits"
+      },
+      {
+        "name": "HFT (scoped)",
+        "description": "High-frequency execution with narrower scope and tighter constraints",
+        "tokenBudget": "micro-budget per token"
+      }
+    ]
+  }
+}

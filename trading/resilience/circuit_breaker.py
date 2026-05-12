@@ -24,7 +24,9 @@ class CircuitBreakerConfig:
     """Circuit breaker configuration"""
     failure_threshold: int = 5          # Failures before opening
     success_threshold: int = 3          # Successes before closing from half-open
-    timeout_seconds: float = 60.0       # Time before half-open attempt
+    timeout_seconds: float = 30.0       # Base time before half-open attempt
+    backoff_multiplier: float = 2.0     # Retry timeout multiplier after failed recovery
+    max_timeout_seconds: float = 300.0  # Maximum half-open retry timeout
     half_open_max_calls: int = 3        # Max calls in half-open state
 
 
@@ -53,6 +55,8 @@ class CircuitBreaker:
         self.success_count = 0
         self.last_failure_time: Optional[float] = None
         self.last_state_change = time.time()
+        self.open_count = 0
+        self.current_timeout_seconds = self.config.timeout_seconds
         
         # Half-open tracking
         self.half_open_calls = 0
@@ -98,6 +102,8 @@ class CircuitBreaker:
             self.failure_count = 0
             self.success_count = 0
             self.half_open_calls = 0
+            self.open_count = 0
+            self.current_timeout_seconds = self.config.timeout_seconds
             for cb in self.on_close_callbacks:
                 try:
                     cb()
@@ -105,6 +111,13 @@ class CircuitBreaker:
                     logger.error(f"Close callback error: {e}")
         
         elif new_state == CircuitState.OPEN:
+            self.open_count += 1
+            self.current_timeout_seconds = min(
+                self.config.max_timeout_seconds,
+                self.config.timeout_seconds * (
+                    self.config.backoff_multiplier ** max(self.open_count - 1, 0)
+                )
+            )
             self.failure_count = 0
             self.success_count = 0
             self.half_open_calls = 0
@@ -134,7 +147,7 @@ class CircuitBreaker:
             # Check if we can proceed
             if self.state == CircuitState.OPEN:
                 # Check if timeout elapsed for half-open attempt
-                if time.time() - self.last_state_change >= self.config.timeout_seconds:
+                if time.time() - self.last_state_change >= self.current_timeout_seconds:
                     self._transition_to(CircuitState.HALF_OPEN)
                 else:
                     self.total_rejected += 1
@@ -207,6 +220,8 @@ class CircuitBreaker:
             'failure_count': self.failure_count,
             'success_count': self.success_count,
             'half_open_calls': self.half_open_calls,
+            'open_count': self.open_count,
+            'current_timeout_seconds': self.current_timeout_seconds,
             'total_calls': self.total_calls,
             'total_failures': self.total_failures,
             'total_successes': self.total_successes,
@@ -215,7 +230,9 @@ class CircuitBreaker:
             'config': {
                 'failure_threshold': self.config.failure_threshold,
                 'success_threshold': self.config.success_threshold,
-                'timeout_seconds': self.config.timeout_seconds
+                'timeout_seconds': self.config.timeout_seconds,
+                'backoff_multiplier': self.config.backoff_multiplier,
+                'max_timeout_seconds': self.config.max_timeout_seconds
             }
         }
     

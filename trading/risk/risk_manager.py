@@ -11,9 +11,10 @@ Implements all critical risk controls for live trading
 import os
 import time
 import logging
-from typing import Dict, Optional, List, Callable
-from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, List, Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock
 from enum import Enum
 
@@ -355,6 +356,101 @@ class ProductionRiskManager:
         """Release kill switch after review"""
         self.manual_kill_switch = False
         logger.critical("KILL SWITCH RELEASED - Trading resumed")
+
+    def snapshot_state(self) -> Dict[str, Any]:
+        """Return a hashable snapshot of production risk state."""
+        with self.lock:
+            positions = {
+                position_id: asdict(position)
+                for position_id, position in self.positions.items()
+            }
+            return {
+                "daily_loss_limit": self.daily_loss_limit,
+                "max_position_size": self.max_position_size,
+                "max_positions_per_symbol": self.max_positions_per_symbol,
+                "max_correlated_exposure": self.max_correlated_exposure,
+                "kill_switch_on": self.kill_switch_on,
+                "manual_kill_switch": self.manual_kill_switch,
+                "positions": positions,
+                "daily_pnl": self.daily_pnl,
+                "peak_daily_pnl": self.peak_daily_pnl,
+                "max_drawdown": self.max_drawdown,
+                "trades_today": self.trades_today,
+                "last_reset_date": self.last_reset_date.isoformat(),
+                "total_checks": self.total_checks,
+                "passed_checks": self.passed_checks,
+                "breaches": self.breaches,
+            }
+
+    def recover_from_checkpoint(self, checkpoint: Any) -> bool:
+        """Restore risk state from a validated checkpoint.
+
+        Any hash mismatch is treated as checkpoint tampering and escalates to the
+        kill switch instead of partially restoring state.
+        """
+        try:
+            from trading.resilience.checkpoints import (
+                Checkpoint,
+                load_checkpoint,
+                stable_payload_hash,
+            )
+
+            if isinstance(checkpoint, (str, Path)):
+                checkpoint_obj = load_checkpoint(checkpoint)
+                payload = checkpoint_obj.payload
+                expected_hash = checkpoint_obj.state_hash
+            elif isinstance(checkpoint, Checkpoint):
+                checkpoint_obj = checkpoint
+                payload = checkpoint_obj.payload
+                expected_hash = checkpoint_obj.state_hash
+            elif isinstance(checkpoint, dict):
+                checkpoint_obj = None
+                payload = dict(checkpoint.get("payload", checkpoint))
+                expected_hash = checkpoint.get("state_hash")
+            else:
+                raise TypeError("unsupported checkpoint type")
+
+            if checkpoint_obj is not None and not checkpoint_obj.validate():
+                self.trigger_kill_switch("checkpoint_validation_failed")
+                return False
+            if expected_hash and stable_payload_hash(payload) != expected_hash:
+                self.trigger_kill_switch("checkpoint_validation_failed")
+                return False
+
+            state = payload.get("risk_state", payload)
+            raw_positions = state.get("positions", {})
+            restored_positions = {
+                str(position_id): Position(**position_data)
+                for position_id, position_data in raw_positions.items()
+            }
+
+            with self.lock:
+                self.daily_loss_limit = float(state.get("daily_loss_limit", self.daily_loss_limit))
+                self.max_position_size = float(state.get("max_position_size", self.max_position_size))
+                self.max_positions_per_symbol = int(
+                    state.get("max_positions_per_symbol", self.max_positions_per_symbol)
+                )
+                self.max_correlated_exposure = float(
+                    state.get("max_correlated_exposure", self.max_correlated_exposure)
+                )
+                self.kill_switch_on = bool(state.get("kill_switch_on", self.kill_switch_on))
+                self.manual_kill_switch = bool(state.get("manual_kill_switch", self.manual_kill_switch))
+                self.positions = restored_positions
+                self.daily_pnl = float(state.get("daily_pnl", self.daily_pnl))
+                self.peak_daily_pnl = float(state.get("peak_daily_pnl", self.peak_daily_pnl))
+                self.max_drawdown = float(state.get("max_drawdown", self.max_drawdown))
+                self.trades_today = int(state.get("trades_today", self.trades_today))
+                reset_date = state.get("last_reset_date")
+                if reset_date:
+                    self.last_reset_date = datetime.fromisoformat(str(reset_date)).date()
+                self.total_checks = int(state.get("total_checks", self.total_checks))
+                self.passed_checks = int(state.get("passed_checks", self.passed_checks))
+                self.breaches = int(state.get("breaches", self.breaches))
+            return True
+        except Exception as exc:
+            logger.error("Risk checkpoint recovery failed: %s", exc)
+            self.trigger_kill_switch("checkpoint_recovery_failed")
+            return False
     
     def get_status(self) -> Dict:
         """Get current risk status"""

@@ -17,6 +17,7 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -181,15 +182,21 @@ class PipelineOrchestrator:
         cb_config = CircuitBreakerConfig(
             failure_threshold=10,
             success_threshold=3,
-            timeout_seconds=30.0
+            timeout_seconds=30.0,
+            backoff_multiplier=2.0,
+            max_timeout_seconds=300.0,
         )
         self.collapse_breaker = get_circuit_breaker("scheduler_collapse", cb_config)
+        self.collapse_breaker.config = cb_config
         self.collapse_breaker.register_on_open(
-            lambda: self.risk_manager.trigger_kill_switch("circuit_breaker_open")
+            lambda: self._trigger_risk_kill_switch("circuit_breaker_open")
+        )
+        self.checkpoint_dir = Path(
+            os.getenv("TRADING_CHECKPOINT_DIR", "trading_data/state/checkpoints")
         )
 
-        # Rolling PnL divergence histogram (last 100 executions)
-        self.divergence_history: deque = deque(maxlen=100)
+        # Rolling PnL divergence histogram (last 1000 closed executions)
+        self.divergence_history: deque = deque(maxlen=1000)
 
         # Operator registry — used by trajectory generator for per-path ICT scoring
         try:
@@ -334,6 +341,78 @@ class PipelineOrchestrator:
             parts.append(f"{key}={text.replace(' ', '_')}")
         suffix = " " + " ".join(parts) if parts else ""
         logger.info("CANARY_AUDIT gate=%s status=%s%s", gate, status, suffix)
+
+    def _trigger_risk_kill_switch(self, reason: str) -> None:
+        trigger = getattr(self.risk_manager, "trigger_kill_switch", None)
+        if callable(trigger):
+            trigger(reason)
+
+    def _scheduler_checkpoint_payload(
+        self,
+        context: PipelineContext,
+        *,
+        kind: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        risk_snapshot = None
+        snapshot = getattr(self.risk_manager, "snapshot_state", None)
+        if callable(snapshot):
+            try:
+                risk_snapshot = snapshot()
+            except Exception as exc:
+                risk_snapshot = {"snapshot_error": str(exc)}
+
+        payload = {
+            "kind": kind,
+            "symbol": context.symbol,
+            "timestamp": context.timestamp,
+            "proposal": context.proposal,
+            "risk_check_passed": context.risk_check_passed,
+            "risk_check_message": context.risk_check_message,
+            "entropy_gate_passed": context.entropy_gate_passed,
+            "entropy_gate_message": context.entropy_gate_message,
+            "delta_s": context.action_scores.get("delta_s", 0.3),
+            "projected_paths": [
+                {
+                    "id": path.get("id"),
+                    "energy": float(path.get("energy", 0.0)),
+                    "action": path.get("action", 1.0),
+                }
+                for path in context.admissible_paths
+            ],
+            "collapse_decision": context.collapse_decision,
+            "token_id": getattr(context.execution_token, "token_id", None),
+            "risk_state": risk_snapshot,
+        }
+        if extra:
+            payload.update(extra)
+        return payload
+
+    def _persist_scheduler_checkpoint(
+        self,
+        kind: str,
+        context: PipelineContext,
+        *,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Path]:
+        try:
+            from trading.resilience.checkpoints import Checkpoint, persist_checkpoint
+
+            checkpoint = Checkpoint.create(
+                component="pipeline",
+                stage=PipelineStage.SCHEDULER_COLLAPSE.value,
+                kind=kind,
+                payload=self._scheduler_checkpoint_payload(context, kind=kind, extra=extra),
+                evidence_hash=getattr(context, "evidence_hash", "") or "",
+            )
+            if not checkpoint.validate():
+                self._trigger_risk_kill_switch("scheduler_checkpoint_invalid")
+                return None
+            return persist_checkpoint(self.checkpoint_dir, checkpoint)
+        except Exception as exc:
+            logger.error("Stage 15: failed to persist %s checkpoint: %s", kind, exc)
+            self._trigger_risk_kill_switch("scheduler_checkpoint_failure")
+            return None
     
     def _execute_stage(self, stage: PipelineStage, context: PipelineContext) -> StageResult:
         """Execute a single pipeline stage"""
@@ -1670,6 +1749,16 @@ class PipelineOrchestrator:
         } for t in context.admissible_paths]
 
         delta_s = context.action_scores.get('delta_s', 0.3)
+        pre_checkpoint = self._persist_scheduler_checkpoint("pre", context)
+        if pre_checkpoint is None:
+            context.collapse_decision = 'REFUSED'
+            self._audit_gate(
+                "stage15_scheduler",
+                "refused",
+                reason="checkpoint_failure",
+                symbol=context.symbol,
+            )
+            return {'decision': 'REFUSED', 'authorized': False, 'reason': 'checkpoint_failure'}
 
         ok, result = self.collapse_breaker.call(
             self.scheduler.authorize_collapse,
@@ -1683,6 +1772,16 @@ class PipelineOrchestrator:
         if not ok:
             context.collapse_decision = 'REFUSED'
             logger.error(f"Stage 15: collapse rejected by circuit breaker — {result}")
+            breaker_status = {}
+            get_status = getattr(self.collapse_breaker, "get_status", None)
+            if callable(get_status):
+                breaker_status = get_status()
+            self._persist_scheduler_checkpoint(
+                "failure",
+                context,
+                extra={"error": str(result), "breaker_status": breaker_status},
+            )
+            self._trigger_risk_kill_switch("scheduler_collapse_recovery_unsafe")
             self._audit_gate(
                 "stage15_scheduler",
                 "refused",
@@ -1694,6 +1793,23 @@ class PipelineOrchestrator:
         decision, token = result
         context.collapse_decision = decision.name
         context.execution_token = token
+        post_checkpoint = self._persist_scheduler_checkpoint(
+            "post",
+            context,
+            extra={
+                "decision": decision.name,
+                "authorized": decision == CollapseDecision.AUTHORIZED,
+            },
+        )
+        if post_checkpoint is None:
+            context.collapse_decision = 'REFUSED'
+            self._audit_gate(
+                "stage15_scheduler",
+                "refused",
+                reason="checkpoint_failure",
+                symbol=context.symbol,
+            )
+            return {'decision': 'REFUSED', 'authorized': False, 'reason': 'checkpoint_failure'}
         self._audit_gate(
             "stage15_scheduler",
             "passed" if decision == CollapseDecision.AUTHORIZED else "refused",
@@ -1736,6 +1852,7 @@ class PipelineOrchestrator:
                 'entry_price': context.proposal['entry'],
                 'status': 'filled',
                 'realized_pnl': 0.0,
+                'pnl_status': 'entry_simulated',
             }
             self._audit_gate(
                 "stage16_execution",
@@ -1843,6 +1960,7 @@ class PipelineOrchestrator:
             'broker':      broker_name,
             'status':      'filled',
             'realized_pnl': 0.0,
+            'pnl_status':   'pending_close',
         }
         return {'executed': True, 'order': context.execution_result}
     
@@ -1867,13 +1985,23 @@ class PipelineOrchestrator:
 
         context.reconciliation_status = status
 
-        # PnL divergence — flag if predicted vs realized PnL exceeds 15%
-        predicted_pnl = context.proposal.get('predicted_pnl', 0.0)
-        realized_pnl = context.execution_result.get('realized_pnl', predicted_pnl)
-        pnl_divergence = abs(predicted_pnl - realized_pnl) / max(abs(predicted_pnl), 1.0)
-        self.divergence_history.append(pnl_divergence)
+        broker = str(context.execution_result.get('broker') or "").lower()
+        pnl_status = context.execution_result.get('pnl_status')
+        live_pending_close = pnl_status == 'pending_close' or broker in {'mt5', 'deriv'}
+        pnl_divergence = None
+        divergence_flagged = False
 
-        divergence_flagged = pnl_divergence > 0.15
+        if live_pending_close:
+            pnl_status = 'pending_close'
+            context.execution_result['pnl_status'] = pnl_status
+        else:
+            # PnL divergence is only valid once realized PnL exists.
+            predicted_pnl = context.proposal.get('predicted_pnl', 0.0)
+            realized_pnl = context.execution_result.get('realized_pnl', predicted_pnl)
+            pnl_divergence = abs(predicted_pnl - realized_pnl) / max(abs(predicted_pnl), 1.0)
+            self.divergence_history.append(pnl_divergence)
+            divergence_flagged = pnl_divergence > 0.15
+
         if divergence_flagged:
             logger.warning(
                 f"Stage 17: PnL divergence {pnl_divergence:.1%} > 15% "
@@ -1892,7 +2020,8 @@ class PipelineOrchestrator:
             "stage17_reconciliation",
             "flagged" if divergence_flagged else "passed",
             price_divergence=f"{price_divergence:.8f}",
-            pnl_divergence=f"{pnl_divergence:.4f}",
+            pnl_divergence=f"{pnl_divergence:.4f}" if pnl_divergence is not None else None,
+            pnl_status=pnl_status,
             reconciliation_status=status,
             symbol=context.symbol,
         )
@@ -1900,6 +2029,7 @@ class PipelineOrchestrator:
             'status': status,
             'divergence': price_divergence,
             'pnl_divergence': pnl_divergence,
+            'pnl_status': pnl_status,
             'divergence_flagged': divergence_flagged
         }
     

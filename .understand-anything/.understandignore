@@ -1,0 +1,67 @@
+# .understandignore — patterns for files/dirs to exclude from analysis
+# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)
+# Lines below are suggestions — uncomment to activate.
+# Use ! prefix to force-include something excluded by defaults.
+#
+# Built-in defaults (always excluded unless negated):
+#   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.
+#
+# --- From .gitignore (uncomment to exclude) ---
+
+# *.py[cod]
+# *$py.class
+# *.so
+# .Python
+# develop-eggs/
+# downloads/
+# eggs/
+# .eggs/
+# lib/
+# lib64/
+# parts/
+# sdist/
+# var/
+# wheels/
+# *.egg-info/
+# .installed.cfg
+# *.egg
+# env/
+# ENV/
+# .claude/
+# .cursor/
+# .qodo/
+# *.swp
+# *.swo
+# *~
+# .pytest_cache/
+# test_results/
+# .env
+# .env.local
+# .DS_Store
+# Thumbs.db
+# logs/
+# debug-*.log
+# demo_trades_*.csv
+# *.enc
+# .apexquantumict/
+# data/
+# *credentials*
+# *password*
+# !scripts/broker/setup_credentials.py
+# *.pem
+# *.key
+# trading/keys/
+# trading_data/
+# PRODUCTION_CERTIFICATE_*.txt
+
+# --- Detected directories (uncomment to exclude) ---
+
+# tests/
+# docs/
+# scripts/
+
+# --- Test file patterns (uncomment to exclude) ---
+
+# *.test.*
+# *.spec.*
+# *.snap
