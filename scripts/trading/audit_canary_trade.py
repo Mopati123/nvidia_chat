@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from trading.brokers.credentials import resolve_mt5_credentials
+
 
 DONE_RETCODE = 10009
 AUDIT_MARKER_RE = re.compile(r"CANARY_AUDIT\s+gate=(?P<gate>\S+)\s+status=(?P<status>\S+)(?P<fields>.*)")
@@ -129,10 +131,9 @@ def _gate(name: str, status: str, evidence: str, **details: Any) -> GateCheck:
 
 
 def _query_mt5_position(ticket: str) -> Dict[str, Any]:
-    required = ("MT5_ACCOUNT_ID", "MT5_PASSWORD", "MT5_SERVER")
-    missing = [key for key in required if not os.environ.get(key)]
-    if missing:
-        return {"checked": False, "error": f"missing env: {', '.join(missing)}"}
+    account, password, server = resolve_mt5_credentials()
+    if not (account and password and server):
+        return {"checked": False, "error": "MT5 credentials unavailable from env or secure store"}
 
     try:
         import MetaTrader5 as mt5
@@ -142,9 +143,9 @@ def _query_mt5_position(ticket: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {"checked": False, "open_positions_total": None, "matching_position": None}
     try:
         if not mt5.initialize(
-            login=int(os.environ["MT5_ACCOUNT_ID"]),
-            password=os.environ["MT5_PASSWORD"],
-            server=os.environ["MT5_SERVER"],
+            login=int(account),
+            password=password,
+            server=server,
             timeout=10000,
         ):
             result["error"] = f"mt5.initialize failed: {mt5.last_error()}"

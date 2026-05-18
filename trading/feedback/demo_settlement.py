@@ -380,11 +380,16 @@ def feed_settlement_to_ppo(record: SettlementRecord, checkpoint_path: str | Path
 
 def _query_mt5(days: int) -> tuple[List[Any], List[Any]]:
     import MetaTrader5 as mt5
+    from trading.brokers.credentials import resolve_mt5_credentials
+
+    account, password, server = resolve_mt5_credentials()
+    if not (account and password and server):
+        raise RuntimeError("MT5 credentials unavailable from env or secure store")
 
     if not mt5.initialize(
-        login=int(os.environ["MT5_ACCOUNT_ID"]),
-        password=os.environ["MT5_PASSWORD"],
-        server=os.environ["MT5_SERVER"],
+        login=int(account),
+        password=password,
+        server=server,
         timeout=10000,
     ):
         raise RuntimeError(f"mt5.initialize failed: {mt5.last_error()}")

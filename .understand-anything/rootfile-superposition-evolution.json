@@ -1,0 +1,97 @@
+{
+  "version": "1.0.0",
+  "generatedFrom": {
+    "rootfileAnalysis": ".understand-anything/rootfile-analysis.md",
+    "knowledgeGraph": ".understand-anything/knowledge-graph.json",
+    "analyzedAt": "2026-05-13T11:33:15.390Z",
+    "gitCommitHash": "c08fa30c99674c42e3b597bf0a0579eee6c60d68"
+  },
+  "model": {
+    "superposition": "Pre-collapse candidate futures: market state, trajectories, behavior families, action scores, selected path, proposal, admissibility, and entropy diagnostics.",
+    "collapse": "Scheduler authority decides whether a proposal becomes an execution token or a refusal.",
+    "evolution": "Ordered stage_history trace from data ingestion through execution, reconciliation, evidence, and learning feedback."
+  },
+  "layers": [
+    { "name": ".github", "nodes": 3, "role": "Repository automation and rootfile CI gates." },
+    { "name": "Application Interfaces", "nodes": 9, "role": "User-facing and integration surfaces that may observe or command the runtime." },
+    { "name": "Backend API", "nodes": 3, "role": "API entrypoints and service support without bypassing authority." },
+    { "name": "Configuration", "nodes": 1, "role": "Runtime configuration used by the architecture." },
+    { "name": "Core Canonical Runtime", "nodes": 35, "role": "Rootfile overlay for authority, orchestration, execution, simulation, economics, and self-healing." },
+    { "name": "Data Core", "nodes": 6, "role": "Data normalization and ML/data preparation." },
+    { "name": "Documentation", "nodes": 25, "role": "The architectural narrative and operating records." },
+    { "name": "Evidence Chain", "nodes": 3, "role": "Hash-chained runtime evidence and proof primitives." },
+    { "name": "Infrastructure", "nodes": 1, "role": "Deployment descriptors." },
+    { "name": "Operational Scripts", "nodes": 26, "role": "Broker setup, demo trading, validation, settlement, and audit commands." },
+    { "name": "Registry Metadata", "nodes": 4, "role": "Operator catalogs and metadata." },
+    { "name": "Repository Root", "nodes": 12, "role": "Root manifests, app descriptors, and entry documents." },
+    { "name": "TAEP Authority", "nodes": 19, "role": "Hamiltonian, quantum, and TAEP authority components." },
+    { "name": "Tests", "nodes": 31, "role": "Unit, integration, performance, and rootfile proof suites." },
+    { "name": "Tools", "nodes": 6, "role": "Static validation and architecture guard tools." },
+    { "name": "Trading Engine", "nodes": 117, "role": "Pipeline, geometry, path/action logic, brokers, feedback, and scheduler runtime." },
+    { "name": "Validation", "nodes": 27, "role": "Preflight and root-level validation utilities." }
+  ],
+  "strongConnections": [
+    { "connection": "Tests -> Trading Engine", "edges": 42 },
+    { "connection": "Validation -> Trading Engine", "edges": 22 },
+    { "connection": "Core Canonical Runtime -> Trading Engine", "edges": 15 },
+    { "connection": "Tests -> Core Canonical Runtime", "edges": 11 },
+    { "connection": "Trading Engine -> TAEP Authority", "edges": 9 },
+    { "connection": "Tests -> Evidence Chain", "edges": 7 },
+    { "connection": "Operational Scripts -> Trading Engine", "edges": 7 },
+    { "connection": "Trading Engine -> Evidence Chain", "edges": 6 },
+    { "connection": "Application Interfaces -> Trading Engine", "edges": 5 },
+    { "connection": "Core Canonical Runtime -> Evidence Chain", "edges": 3 }
+  ],
+  "laws": [
+    { "id": "H1", "name": "State Space", "stageGroup": "data/state", "observable": "raw_data -> market_state" },
+    { "id": "H2", "name": "Geometry", "stageGroup": "geometry", "observable": "ICT and liquidity features -> metric context" },
+    { "id": "H3", "name": "Connection", "stageGroup": "geometry", "observable": "liquidity gradients bend trajectories" },
+    { "id": "H4", "name": "Curvature", "stageGroup": "geometry", "observable": "curvature classifies regime stress" },
+    { "id": "H5", "name": "Path Space", "stageGroup": "trajectory", "observable": "trajectories hold candidate futures" },
+    { "id": "H6", "name": "Ramanujan Compression", "stageGroup": "trajectory", "observable": "candidate futures become behavior families" },
+    { "id": "H7", "name": "Action", "stageGroup": "scoring", "observable": "paths receive action costs and weights" },
+    { "id": "H8", "name": "Admissibility", "stageGroup": "risk", "observable": "unsafe paths and proposals are refused" },
+    { "id": "H9", "name": "Entropy", "stageGroup": "entropy", "observable": "information gain is measured before scheduler authority" },
+    { "id": "H10", "name": "Scheduler Authority", "stageGroup": "collapse", "observable": "scheduler returns AUTHORIZED or REFUSED" },
+    { "id": "H11", "name": "Collapse Execution", "stageGroup": "execution", "observable": "authorized token gates paper or broker side effects" },
+    { "id": "H12", "name": "Reconciliation", "stageGroup": "feedback", "observable": "intended and realized outcomes are compared" },
+    { "id": "H13", "name": "Evidence", "stageGroup": "evidence", "observable": "refusals and executions become hash-chained evidence" }
+  ],
+  "stageTrace": [
+    "DATA_INGESTION",
+    "STATE_CONSTRUCTION",
+    "ICT_EXTRACTION",
+    "GEOMETRY_COMPUTATION",
+    "FIELD_EVALUATION",
+    "TRAJECTORY_GENERATION",
+    "RAMANUJAN_COMPRESSION",
+    "ADMISSIBILITY_FILTERING",
+    "ACTION_EVALUATION",
+    "PATH_INTEGRAL",
+    "INTERFERENCE_SELECTION",
+    "PATH_SELECTION",
+    "PROPOSAL_GENERATION",
+    "ADMISSIBILITY_CHECK",
+    "ENTROPY_GATE",
+    "SCHEDULER_COLLAPSE",
+    "EXECUTION",
+    "RECONCILIATION",
+    "EVIDENCE_EMISSION",
+    "WEIGHT_UPDATE",
+    "COMPLETED"
+  ],
+  "safeObservationPath": {
+    "test": "tests/rootfile/test_pipeline_paper_e2e.py",
+    "mode": "offline paper",
+    "brokerNetwork": false,
+    "expected": [
+      "all decision stages appear in order",
+      "risk and entropy pass",
+      "scheduler authorizes",
+      "execution token is released",
+      "paper execution fills without broker",
+      "reconciliation reports match",
+      "evidence hash is present"
+    ]
+  }
+}

@@ -18,6 +18,7 @@ import time
 
 from core.authority.token_validator import validate_token
 from tachyonic_chain.audit_log import append_execution_evidence
+from trading.brokers.credentials import resolve_deriv_api_token
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class DerivBroker:
     WEBSOCKET_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089"
     
     def __init__(self, api_token: Optional[str] = None):
-        self.api_token = api_token or os.getenv("DERIV_API_TOKEN")
+        self.api_token = resolve_deriv_api_token(api_token)
         self.ws = None
         self.connected = False
         self.authorized = False

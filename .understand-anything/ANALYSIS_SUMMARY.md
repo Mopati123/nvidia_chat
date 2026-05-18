@@ -2,34 +2,36 @@
 
 ## Project Analysis Complete
 
-**Project:** nvidia_chat
-**Analyzed:** 2026-05-12T15:03:45.754Z
-**Commit:** fa8f001645f56d802f6a0d80e40236ecba744d8c
-**Files Analyzed:** 332
+**Project:** nvidia_chat  
+**Analyzed:** 2026-05-13T11:33:15.390Z  
+**Commit:** c08fa30c99674c42e3b597bf0a0579eee6c60d68  
+**Files Analyzed:** 326
 
 ## Graph Statistics
 
-- Total Nodes: 1365
-  - class: 310
-  - config: 26
+- Total Nodes: 1221
+  - class: 311
+  - concept: 13
+  - config: 11
   - document: 32
-  - file: 289
-  - function: 691
-  - module: 16
+  - file: 282
+  - function: 571
   - pipeline: 1
 
-- Total Edges: 1554
-  - contains: 1336
-  - imports: 218
+- Total Edges: 1243
+  - contains: 882
+  - defines_schema: 13
+  - documents: 3
+  - imports: 332
+  - related: 13
 
 - File Categories:
-  - code: 280
-  - config: 10
-  - data: 6
-  - docs: 32
-  - infra: 1
+  - code: 253
+  - config: 9
+  - docs: 30
+  - infra: 5
   - markup: 2
-  - script: 1
+  - script: 27
 
 - Layers Identified: 17
 - .github
@@ -59,4 +61,4 @@ Path: .understand-anything/knowledge-graph.json
 ## Validation
 
 No fatal graph validation issues detected.
-No skipped files.
+No skipped text files outside configured ignore rules.

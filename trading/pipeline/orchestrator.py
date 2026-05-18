@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from .stage_contracts import CANONICAL_STAGE_SEQUENCE, get_stage_operator_spec
+from .stage_proof import build_stage_proof, stage_context_snapshot
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +77,15 @@ class StageResult:
     error: Optional[str] = None
     duration_ms: float = 0.0
     checkpoint_hash: str = ""
+    operator_id: str = ""
+    canonical_law: str = ""
+    input_hash: str = ""
+    output_hash: str = ""
+    previous_hash: str = ""
+    proof_hash: str = ""
+    preconditions: List[str] = field(default_factory=list)
+    postconditions: List[str] = field(default_factory=list)
+    refusal_code: Optional[str] = None
 
 
 @dataclass
@@ -257,29 +269,8 @@ class PipelineOrchestrator:
         
         logger.info(f"Starting pipeline execution for {symbol}")
         
-        # Execute stages in sequence
-        stages = [
-            PipelineStage.DATA_INGESTION,
-            PipelineStage.STATE_CONSTRUCTION,
-            PipelineStage.ICT_EXTRACTION,
-            PipelineStage.GEOMETRY_COMPUTATION,
-            PipelineStage.FIELD_EVALUATION,
-            PipelineStage.TRAJECTORY_GENERATION,
-            PipelineStage.RAMANUJAN_COMPRESSION,
-            PipelineStage.ADMISSIBILITY_FILTERING,
-            PipelineStage.ACTION_EVALUATION,
-            PipelineStage.PATH_INTEGRAL,
-            PipelineStage.INTERFERENCE_SELECTION,
-            PipelineStage.PATH_SELECTION,
-            PipelineStage.PROPOSAL_GENERATION,
-            PipelineStage.ADMISSIBILITY_CHECK,
-            PipelineStage.ENTROPY_GATE,
-            PipelineStage.SCHEDULER_COLLAPSE,
-            PipelineStage.EXECUTION,
-            PipelineStage.RECONCILIATION,
-            PipelineStage.EVIDENCE_EMISSION,
-            PipelineStage.WEIGHT_UPDATE,
-        ]
+        # Execute stages in the rootfile-governed canonical sequence.
+        stages = [PipelineStage(stage) for stage in CANONICAL_STAGE_SEQUENCE]
         
         for stage in stages:
             result = self._execute_stage(stage, context)
@@ -288,7 +279,13 @@ class PipelineOrchestrator:
             if not result.success:
                 logger.warning(f"Pipeline failed at stage {stage.value}: {result.error}")
                 context.stage_history.append(
-                    StageResult(stage=PipelineStage.FAILED, success=False, error=result.error)
+                    self._terminal_stage_result(
+                        context,
+                        PipelineStage.FAILED,
+                        success=False,
+                        output={'failed_stage': stage.value},
+                        error=result.error,
+                    )
                 )
                 self.execution_count += 1
                 self.failure_count += 1
@@ -300,8 +297,12 @@ class PipelineOrchestrator:
                 if context.collapse_decision == 'REFUSED':
                     logger.info("Scheduler refused collapse - terminating pipeline")
                     context.stage_history.append(
-                        StageResult(stage=PipelineStage.COMPLETED, success=True, 
-                                   output={'reason': 'scheduler_refused'})
+                        self._terminal_stage_result(
+                            context,
+                            PipelineStage.COMPLETED,
+                            success=True,
+                            output={'reason': 'scheduler_refused'},
+                        )
                     )
                     self.execution_count += 1
                     self.success_count += 1
@@ -310,8 +311,12 @@ class PipelineOrchestrator:
         
         # Completed successfully
         context.stage_history.append(
-            StageResult(stage=PipelineStage.COMPLETED, success=True,
-                       output={'duration_ms': context.duration_ms})
+            self._terminal_stage_result(
+                context,
+                PipelineStage.COMPLETED,
+                success=True,
+                output={'duration_ms': context.duration_ms},
+            )
         )
         
         self.execution_count += 1
@@ -413,21 +418,100 @@ class PipelineOrchestrator:
             logger.error("Stage 15: failed to persist %s checkpoint: %s", kind, exc)
             self._trigger_risk_kill_switch("scheduler_checkpoint_failure")
             return None
+
+    @staticmethod
+    def _previous_stage_proof_hash(context: PipelineContext) -> str:
+        if not context.stage_history:
+            return ""
+        previous = context.stage_history[-1]
+        return previous.proof_hash or previous.checkpoint_hash or ""
+
+    def _stage_result_with_proof(
+        self,
+        *,
+        stage: PipelineStage,
+        success: bool,
+        output: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+        duration_ms: float = 0.0,
+        input_snapshot: Optional[Dict[str, Any]] = None,
+        output_snapshot: Optional[Dict[str, Any]] = None,
+        previous_hash: str = "",
+    ) -> StageResult:
+        stage_output = output or {}
+        if input_snapshot is None:
+            input_snapshot = {}
+        if output_snapshot is None:
+            output_snapshot = {"output": stage_output}
+        spec = get_stage_operator_spec(stage)
+        proof = build_stage_proof(
+            stage=stage.value,
+            spec=spec,
+            input_snapshot=input_snapshot,
+            output_snapshot=output_snapshot,
+            success=success,
+            output=stage_output,
+            error=error,
+            previous_hash=previous_hash,
+        )
+        return StageResult(
+            stage=stage,
+            success=success,
+            output=stage_output,
+            error=error,
+            duration_ms=duration_ms,
+            checkpoint_hash=proof["proof_hash"][:16],
+            operator_id=proof["operator_id"],
+            canonical_law=proof["canonical_law"],
+            input_hash=proof["input_hash"],
+            output_hash=proof["output_hash"],
+            previous_hash=proof["previous_hash"],
+            proof_hash=proof["proof_hash"],
+            preconditions=proof["preconditions"],
+            postconditions=proof["postconditions"],
+            refusal_code=proof["refusal_code"],
+        )
+
+    def _terminal_stage_result(
+        self,
+        context: PipelineContext,
+        stage: PipelineStage,
+        *,
+        success: bool,
+        output: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> StageResult:
+        snapshot = stage_context_snapshot(context)
+        stage_output = output or {}
+        return self._stage_result_with_proof(
+            stage=stage,
+            success=success,
+            output=stage_output,
+            error=error,
+            input_snapshot=snapshot,
+            output_snapshot={"output": stage_output, "context": snapshot},
+            previous_hash=self._previous_stage_proof_hash(context),
+        )
     
     def _execute_stage(self, stage: PipelineStage, context: PipelineContext) -> StageResult:
         """Execute a single pipeline stage"""
         start = time.time()
+        input_snapshot = stage_context_snapshot(context)
+        previous_hash = self._previous_stage_proof_hash(context)
         
         handler = self.stage_handlers.get(stage)
         if handler is None:
-            return StageResult(
+            return self._stage_result_with_proof(
                 stage=stage,
                 success=False,
-                error=f"No handler for stage {stage}"
+                error=f"No handler for stage {stage}",
+                input_snapshot=input_snapshot,
+                output_snapshot={"output": {}, "context": input_snapshot},
+                previous_hash=previous_hash,
             )
         
         try:
-            output = handler(context)
+            output = handler(context) or {}
             duration = (time.time() - start) * 1000
 
             # Record stage timing for Prometheus metrics
@@ -437,27 +521,36 @@ class PipelineOrchestrator:
             except Exception:
                 pass
 
-            # Create checkpoint hash
-            import hashlib
-            checkpoint_data = f"{stage.value}:{context.symbol}:{context.timestamp}"
-            checkpoint_hash = hashlib.sha256(checkpoint_data.encode()).hexdigest()[:16]
-
-            return StageResult(
+            output_snapshot = {
+                "output": output,
+                "context": stage_context_snapshot(context),
+            }
+            return self._stage_result_with_proof(
                 stage=stage,
                 success=True,
                 output=output,
                 duration_ms=duration,
-                checkpoint_hash=checkpoint_hash
+                input_snapshot=input_snapshot,
+                output_snapshot=output_snapshot,
+                previous_hash=previous_hash,
             )
 
         except Exception as e:
             duration = (time.time() - start) * 1000
             logger.error(f"Stage {stage.value} failed: {e}")
-            return StageResult(
+            output_snapshot = {
+                "output": {},
+                "context": stage_context_snapshot(context),
+                "error": str(e),
+            }
+            return self._stage_result_with_proof(
                 stage=stage,
                 success=False,
                 error=str(e),
-                duration_ms=duration
+                duration_ms=duration,
+                input_snapshot=input_snapshot,
+                output_snapshot=output_snapshot,
+                previous_hash=previous_hash,
             )
     
     # === STAGE HANDLERS ===

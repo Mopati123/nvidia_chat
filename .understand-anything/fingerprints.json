@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "fa8f001645f56d802f6a0d80e40236ecba744d8c",
-  "generatedAt": "2026-05-12T15:03:45.754Z",
+  "gitCommitHash": "c08fa30c99674c42e3b597bf0a0579eee6c60d68",
+  "generatedAt": "2026-05-13T11:33:16.376Z",
   "files": {
     ".env.example": {
       "filePath": ".env.example",
@@ -41,46 +41,6 @@
       "imports": [],
       "exports": [],
       "totalLines": 45,
-      "hasStructuralAnalysis": true
-    },
-    ".slugignore": {
-      "filePath": ".slugignore",
-      "contentHash": "cddd1434d4bf5ae6f8f7348f042a639155a45cdd175a857fd08f176a846f9e2a",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 6,
-      "hasStructuralAnalysis": false
-    },
-    "CANONICAL_ANALYSIS.json": {
-      "filePath": "CANONICAL_ANALYSIS.json",
-      "contentHash": "85651ff036436cad5d68409e2656de43f09d10ca1a5e7795ffcc149554d253bd",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 1360,
-      "hasStructuralAnalysis": true
-    },
-    "Procfile": {
-      "filePath": "Procfile",
-      "contentHash": "5256d0319c33646a4e70619e2bff5409dd15c9f9e0fd26d853e62f9fd34a04d7",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 2,
-      "hasStructuralAnalysis": false
-    },
-    "README.md": {
-      "filePath": "README.md",
-      "contentHash": "3e062466dd8dde55291919a16667b48475d34230d6bdc227960c926ad8f1e7bf",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 307,
       "hasStructuralAnalysis": true
     },
     "app.json": {
@@ -228,80 +188,6 @@
       ],
       "exports": [],
       "totalLines": 27,
-      "hasStructuralAnalysis": true
-    },
-    "apps/telegram/telegram_bot.py": {
-      "filePath": "apps/telegram/telegram_bot.py",
-      "contentHash": "b7eb0361ee7986d547ca607a167803e6dd4168bb300bdc5c14673ddb4e0bb7a7",
-      "functions": [
-        {
-          "name": "start",
-          "params": [
-            "update",
-            "context"
-          ],
-          "exported": true,
-          "lineCount": 4
-        },
-        {
-          "name": "chat",
-          "params": [
-            "update",
-            "context"
-          ],
-          "exported": true,
-          "lineCount": 21
-        },
-        {
-          "name": "main",
-          "params": [],
-          "exported": true,
-          "lineCount": 8
-        }
-      ],
-      "classes": [],
-      "imports": [
-        {
-          "source": "openai",
-          "specifiers": [
-            "OpenAI"
-          ]
-        },
-        {
-          "source": "os",
-          "specifiers": [
-            "os"
-          ]
-        },
-        {
-          "source": "asyncio",
-          "specifiers": [
-            "asyncio"
-          ]
-        },
-        {
-          "source": "telegram",
-          "specifiers": [
-            "Update"
-          ]
-        },
-        {
-          "source": "telegram.ext",
-          "specifiers": [
-            "Application",
-            "CommandHandler",
-            "MessageHandler",
-            "filters",
-            "ContextTypes"
-          ]
-        }
-      ],
-      "exports": [
-        "start",
-        "chat",
-        "main"
-      ],
-      "totalLines": 64,
       "hasStructuralAnalysis": true
     },
     "apps/telegram/telegram_bot_full.py": {
@@ -598,6 +484,80 @@
       "totalLines": 832,
       "hasStructuralAnalysis": true
     },
+    "apps/telegram/telegram_bot.py": {
+      "filePath": "apps/telegram/telegram_bot.py",
+      "contentHash": "b7eb0361ee7986d547ca607a167803e6dd4168bb300bdc5c14673ddb4e0bb7a7",
+      "functions": [
+        {
+          "name": "start",
+          "params": [
+            "update",
+            "context"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "chat",
+          "params": [
+            "update",
+            "context"
+          ],
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": true,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "openai",
+          "specifiers": [
+            "OpenAI"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "telegram",
+          "specifiers": [
+            "Update"
+          ]
+        },
+        {
+          "source": "telegram.ext",
+          "specifiers": [
+            "Application",
+            "CommandHandler",
+            "MessageHandler",
+            "filters",
+            "ContextTypes"
+          ]
+        }
+      ],
+      "exports": [
+        "start",
+        "chat",
+        "main"
+      ],
+      "totalLines": 64,
+      "hasStructuralAnalysis": true
+    },
     "apps/telegram/trading_integration.py": {
       "filePath": "apps/telegram/trading_integration.py",
       "contentHash": "e8483747b3f4d027a5de330b87e74f9695e8a589ef5c3fbc660dd1d577768e48",
@@ -873,6 +833,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 15,
+      "hasStructuralAnalysis": true
+    },
+    "CANONICAL_ANALYSIS.json": {
+      "filePath": "CANONICAL_ANALYSIS.json",
+      "contentHash": "85651ff036436cad5d68409e2656de43f09d10ca1a5e7795ffcc149554d253bd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1360,
       "hasStructuralAnalysis": true
     },
     "config/operator_meta_schema.json": {
@@ -1444,165 +1414,6 @@
       "totalLines": 14,
       "hasStructuralAnalysis": true
     },
-    "core/execution/hft.py": {
-      "filePath": "core/execution/hft.py",
-      "contentHash": "1e80bcbf73a2da4b3fcc7364baa54632a183077f45784f9da09c797eb0586555",
-      "functions": [],
-      "classes": [
-        {
-          "name": "HFTOrderRequest",
-          "methods": [
-            "notional",
-            "validation_context"
-          ],
-          "properties": [
-            "broker",
-            "symbol",
-            "side",
-            "quantity",
-            "price",
-            "max_slippage_bps",
-            "strategy_id",
-            "idempotency_key",
-            "timestamp",
-            "sandbox"
-          ],
-          "exported": true,
-          "lineCount": 27
-        },
-        {
-          "name": "HFTOrderResult",
-          "methods": [
-            "to_dict"
-          ],
-          "properties": [
-            "accepted",
-            "outcome",
-            "reason",
-            "broker",
-            "symbol",
-            "side",
-            "quantity",
-            "price",
-            "notional",
-            "idempotency_key",
-            "order_id",
-            "evidence_hash"
-          ],
-          "exported": true,
-          "lineCount": 18
-        },
-        {
-          "name": "HFTRiskLimits",
-          "methods": [],
-          "properties": [
-            "max_orders_per_minute",
-            "max_open_notional",
-            "daily_loss_cap",
-            "per_symbol_exposure",
-            "stale_feed_cutoff_seconds",
-            "max_slippage_bps",
-            "retry_cap",
-            "cooldown_after_failures_seconds",
-            "max_failures_before_cooldown"
-          ],
-          "exported": true,
-          "lineCount": 12
-        },
-        {
-          "name": "HFTExecutionState",
-          "methods": [],
-          "properties": [
-            "open_notional",
-            "daily_pnl",
-            "per_symbol_notional",
-            "order_timestamps",
-            "token_order_counts",
-            "failure_count",
-            "cooldown_until",
-            "kill_switch_active"
-          ],
-          "exported": true,
-          "lineCount": 11
-        },
-        {
-          "name": "FakeHFTBroker",
-          "methods": [
-            "__init__",
-            "place_order"
-          ],
-          "properties": [],
-          "exported": true,
-          "lineCount": 16
-        },
-        {
-          "name": "HFTSandboxGateway",
-          "methods": [
-            "__init__",
-            "execute",
-            "cancel_order",
-            "reconcile_order",
-            "trigger_kill_switch",
-            "refuse_request",
-            "_risk_refusal_reason",
-            "_register_acceptance",
-            "_record_failure",
-            "_refuse",
-            "_failed",
-            "_emit"
-          ],
-          "properties": [],
-          "exported": true,
-          "lineCount": 248
-        }
-      ],
-      "imports": [
-        {
-          "source": "time",
-          "specifiers": [
-            "time"
-          ]
-        },
-        {
-          "source": "dataclasses",
-          "specifiers": [
-            "asdict",
-            "dataclass",
-            "field"
-          ]
-        },
-        {
-          "source": "typing",
-          "specifiers": [
-            "Any",
-            "Dict",
-            "Optional"
-          ]
-        },
-        {
-          "source": "core.authority.token_validator",
-          "specifiers": [
-            "validate_token"
-          ]
-        },
-        {
-          "source": "tachyonic_chain.audit_log",
-          "specifiers": [
-            "append_execution_evidence"
-          ]
-        }
-      ],
-      "exports": [
-        "HFTOrderRequest",
-        "HFTOrderResult",
-        "HFTRiskLimits",
-        "HFTExecutionState",
-        "FakeHFTBroker",
-        "HFTSandboxGateway"
-      ],
-      "totalLines": 369,
-      "hasStructuralAnalysis": true
-    },
     "core/execution/hft_canary.py": {
       "filePath": "core/execution/hft_canary.py",
       "contentHash": "320525840e1b576179a856ddd18b761e238ffbfa52a1971e57282c1d5a554a7f",
@@ -1761,6 +1572,165 @@
         "CodeGatedHFTGateway"
       ],
       "totalLines": 247,
+      "hasStructuralAnalysis": true
+    },
+    "core/execution/hft.py": {
+      "filePath": "core/execution/hft.py",
+      "contentHash": "1e80bcbf73a2da4b3fcc7364baa54632a183077f45784f9da09c797eb0586555",
+      "functions": [],
+      "classes": [
+        {
+          "name": "HFTOrderRequest",
+          "methods": [
+            "notional",
+            "validation_context"
+          ],
+          "properties": [
+            "broker",
+            "symbol",
+            "side",
+            "quantity",
+            "price",
+            "max_slippage_bps",
+            "strategy_id",
+            "idempotency_key",
+            "timestamp",
+            "sandbox"
+          ],
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "HFTOrderResult",
+          "methods": [
+            "to_dict"
+          ],
+          "properties": [
+            "accepted",
+            "outcome",
+            "reason",
+            "broker",
+            "symbol",
+            "side",
+            "quantity",
+            "price",
+            "notional",
+            "idempotency_key",
+            "order_id",
+            "evidence_hash"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "HFTRiskLimits",
+          "methods": [],
+          "properties": [
+            "max_orders_per_minute",
+            "max_open_notional",
+            "daily_loss_cap",
+            "per_symbol_exposure",
+            "stale_feed_cutoff_seconds",
+            "max_slippage_bps",
+            "retry_cap",
+            "cooldown_after_failures_seconds",
+            "max_failures_before_cooldown"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "HFTExecutionState",
+          "methods": [],
+          "properties": [
+            "open_notional",
+            "daily_pnl",
+            "per_symbol_notional",
+            "order_timestamps",
+            "token_order_counts",
+            "failure_count",
+            "cooldown_until",
+            "kill_switch_active"
+          ],
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "FakeHFTBroker",
+          "methods": [
+            "__init__",
+            "place_order"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "HFTSandboxGateway",
+          "methods": [
+            "__init__",
+            "execute",
+            "cancel_order",
+            "reconcile_order",
+            "trigger_kill_switch",
+            "refuse_request",
+            "_risk_refusal_reason",
+            "_register_acceptance",
+            "_record_failure",
+            "_refuse",
+            "_failed",
+            "_emit"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 248
+        }
+      ],
+      "imports": [
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "asdict",
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Dict",
+            "Optional"
+          ]
+        },
+        {
+          "source": "core.authority.token_validator",
+          "specifiers": [
+            "validate_token"
+          ]
+        },
+        {
+          "source": "tachyonic_chain.audit_log",
+          "specifiers": [
+            "append_execution_evidence"
+          ]
+        }
+      ],
+      "exports": [
+        "HFTOrderRequest",
+        "HFTOrderResult",
+        "HFTRiskLimits",
+        "HFTExecutionState",
+        "FakeHFTBroker",
+        "HFTSandboxGateway"
+      ],
+      "totalLines": 369,
       "hasStructuralAnalysis": true
     },
     "core/execution/live.py": {
@@ -2585,26 +2555,6 @@
       "totalLines": 19,
       "hasStructuralAnalysis": true
     },
-    "core/simulation/order_book.py": {
-      "filePath": "core/simulation/order_book.py",
-      "contentHash": "b14b21a8a100dc5747abced94cd6b34e170325302d1f315d60c7d1fd1343c5a8",
-      "functions": [],
-      "classes": [],
-      "imports": [
-        {
-          "source": "trading.microstructure.order_book",
-          "specifiers": [
-            "OrderBookEngine",
-            "OrderBookLevel",
-            "OrderBookSignals",
-            "OrderBookSnapshot"
-          ]
-        }
-      ],
-      "exports": [],
-      "totalLines": 22,
-      "hasStructuralAnalysis": true
-    },
     "core/simulation/order_book_feeds.py": {
       "filePath": "core/simulation/order_book_feeds.py",
       "contentHash": "39b25a338216d1ed334b19b1d7687aa86f75f9d3d5bf18726cd9c997578e8d43",
@@ -2627,6 +2577,26 @@
       ],
       "exports": [],
       "totalLines": 31,
+      "hasStructuralAnalysis": true
+    },
+    "core/simulation/order_book.py": {
+      "filePath": "core/simulation/order_book.py",
+      "contentHash": "b14b21a8a100dc5747abced94cd6b34e170325302d1f315d60c7d1fd1343c5a8",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "trading.microstructure.order_book",
+          "specifiers": [
+            "OrderBookEngine",
+            "OrderBookLevel",
+            "OrderBookSignals",
+            "OrderBookSnapshot"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 22,
       "hasStructuralAnalysis": true
     },
     "core/simulation/path_integral.py": {
@@ -3094,44 +3064,14 @@
       "totalLines": 24,
       "hasStructuralAnalysis": true
     },
-    "docs/DEVELOPER_GUIDE.md": {
-      "filePath": "docs/DEVELOPER_GUIDE.md",
-      "contentHash": "63793c218697b5e23c424ed124401f49f34c2722168cc61eca2829e3db3b6a7c",
+    "docs/deployment/DEPLOY_QUICK.md": {
+      "filePath": "docs/deployment/DEPLOY_QUICK.md",
+      "contentHash": "27a5c019e9f97502d77abf5248b74b333347d3f8cd3746587f666bbe47633b59",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 54,
-      "hasStructuralAnalysis": true
-    },
-    "docs/ROOTFILE_HAMILTONIAN_CANON.md": {
-      "filePath": "docs/ROOTFILE_HAMILTONIAN_CANON.md",
-      "contentHash": "6036346b368388d2a391f14238cb6941a250b147d32b1bf799e245063f4d579b",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 147,
-      "hasStructuralAnalysis": true
-    },
-    "docs/SECURITY.md": {
-      "filePath": "docs/SECURITY.md",
-      "contentHash": "cb7e357b596b3f61d568f28aac71af12d741fd14532844aead7cf8f2a742b9ab",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 26,
-      "hasStructuralAnalysis": true
-    },
-    "docs/TUTORIAL.md": {
-      "filePath": "docs/TUTORIAL.md",
-      "contentHash": "83da3aeaa3e10a0fe62d4016bcd025dd60000e0e7a78a1930013c883e2fea3bb",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 445,
+      "totalLines": 95,
       "hasStructuralAnalysis": true
     },
     "docs/deployment/DEPLOY.md": {
@@ -3144,16 +3084,6 @@
       "totalLines": 125,
       "hasStructuralAnalysis": true
     },
-    "docs/deployment/DEPLOY_QUICK.md": {
-      "filePath": "docs/deployment/DEPLOY_QUICK.md",
-      "contentHash": "27a5c019e9f97502d77abf5248b74b333347d3f8cd3746587f666bbe47633b59",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 95,
-      "hasStructuralAnalysis": true
-    },
     "docs/deployment/GITHUB_PUSH_INSTRUCTIONS.md": {
       "filePath": "docs/deployment/GITHUB_PUSH_INSTRUCTIONS.md",
       "contentHash": "a6d3d83592fafafc9554726b28d99908db42ae412d77ae2ff5f42630d1edce41",
@@ -3162,6 +3092,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 103,
+      "hasStructuralAnalysis": true
+    },
+    "docs/DEVELOPER_GUIDE.md": {
+      "filePath": "docs/DEVELOPER_GUIDE.md",
+      "contentHash": "63793c218697b5e23c424ed124401f49f34c2722168cc61eca2829e3db3b6a7c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 54,
       "hasStructuralAnalysis": true
     },
     "docs/examples/README.md": {
@@ -3191,8 +3131,18 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 68,
+      "totalLines": 69,
       "hasStructuralAnalysis": false
+    },
+    "docs/reports/first_principles_analysis.md": {
+      "filePath": "docs/reports/first_principles_analysis.md",
+      "contentHash": "1f4ff0a37b55ce50e190574c16e88ae1a6a71afd7813a6487e079e6caf63ba6a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 345,
+      "hasStructuralAnalysis": true
     },
     "docs/reports/IMPLEMENTATION_CHECKLIST_COMPLETE.md": {
       "filePath": "docs/reports/IMPLEMENTATION_CHECKLIST_COMPLETE.md",
@@ -3294,16 +3244,6 @@
       "totalLines": 266,
       "hasStructuralAnalysis": true
     },
-    "docs/reports/first_principles_analysis.md": {
-      "filePath": "docs/reports/first_principles_analysis.md",
-      "contentHash": "1f4ff0a37b55ce50e190574c16e88ae1a6a71afd7813a6487e079e6caf63ba6a",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 345,
-      "hasStructuralAnalysis": true
-    },
     "docs/roadmaps/T3_ROADMAP.md": {
       "filePath": "docs/roadmaps/T3_ROADMAP.md",
       "contentHash": "8021f8b08fe045a42c901e8937d68359d7775559f81d65bf7024c3da4d0a4f2a",
@@ -3312,6 +3252,36 @@
       "imports": [],
       "exports": [],
       "totalLines": 451,
+      "hasStructuralAnalysis": true
+    },
+    "docs/ROOTFILE_HAMILTONIAN_CANON.md": {
+      "filePath": "docs/ROOTFILE_HAMILTONIAN_CANON.md",
+      "contentHash": "6036346b368388d2a391f14238cb6941a250b147d32b1bf799e245063f4d579b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 147,
+      "hasStructuralAnalysis": true
+    },
+    "docs/SECURITY.md": {
+      "filePath": "docs/SECURITY.md",
+      "contentHash": "cb7e357b596b3f61d568f28aac71af12d741fd14532844aead7cf8f2a742b9ab",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 26,
+      "hasStructuralAnalysis": true
+    },
+    "docs/TUTORIAL.md": {
+      "filePath": "docs/TUTORIAL.md",
+      "contentHash": "83da3aeaa3e10a0fe62d4016bcd025dd60000e0e7a78a1930013c883e2fea3bb",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 445,
       "hasStructuralAnalysis": true
     },
     "infra/__init__.py": {
@@ -3334,6 +3304,16 @@
       "totalLines": 15,
       "hasStructuralAnalysis": true
     },
+    "Procfile": {
+      "filePath": "Procfile",
+      "contentHash": "5256d0319c33646a4e70619e2bff5409dd15c9f9e0fd26d853e62f9fd34a04d7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 3,
+      "hasStructuralAnalysis": false
+    },
     "pyproject.toml": {
       "filePath": "pyproject.toml",
       "contentHash": "52c1959462b6e88700e715bf16817db7045a7fe3df8d677713a3cffcca7416b5",
@@ -3342,6 +3322,16 @@
       "imports": [],
       "exports": [],
       "totalLines": 76,
+      "hasStructuralAnalysis": true
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "3e062466dd8dde55291919a16667b48475d34230d6bdc227960c926ad8f1e7bf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 307,
       "hasStructuralAnalysis": true
     },
     "registry/__init__.py": {
@@ -3391,7 +3381,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 28,
+      "totalLines": 29,
       "hasStructuralAnalysis": false
     },
     "runtime.txt": {
@@ -3401,7 +3391,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 1,
+      "totalLines": 2,
       "hasStructuralAnalysis": false
     },
     "scripts/__init__.py": {
@@ -3426,16 +3416,10 @@
     },
     "scripts/broker/add_deriv_quick.py": {
       "filePath": "scripts/broker/add_deriv_quick.py",
-      "contentHash": "d8700952f631a07e4596c81498dae06f603c3cfb246210524939c442c91198c9",
+      "contentHash": "e9ae059283630b0ed464459649ac367a7d0777b15bbc8068d5762fdaed812ecf",
       "functions": [],
       "classes": [],
       "imports": [
-        {
-          "source": "sys",
-          "specifiers": [
-            "sys"
-          ]
-        },
         {
           "source": "os",
           "specifiers": [
@@ -3443,32 +3427,9 @@
           ]
         },
         {
-          "source": "trading.brokers.credentials",
-          "specifiers": [
-            "get_credential_manager"
-          ]
-        }
-      ],
-      "exports": [],
-      "totalLines": 46,
-      "hasStructuralAnalysis": true
-    },
-    "scripts/broker/add_mt5_quick.py": {
-      "filePath": "scripts/broker/add_mt5_quick.py",
-      "contentHash": "fa8c433ba9f9f6fdf2abf55ea510310aae614b32f5bf18d3a2759920324498e2",
-      "functions": [],
-      "classes": [],
-      "imports": [
-        {
           "source": "sys",
           "specifiers": [
             "sys"
-          ]
-        },
-        {
-          "source": "os",
-          "specifiers": [
-            "os"
           ]
         },
         {
@@ -3480,6 +3441,35 @@
       ],
       "exports": [],
       "totalLines": 53,
+      "hasStructuralAnalysis": true
+    },
+    "scripts/broker/add_mt5_quick.py": {
+      "filePath": "scripts/broker/add_mt5_quick.py",
+      "contentHash": "83744d804d500cd1dcbfecd2a56b7d3049b8c0eca41281ee280fcc0179f963b1",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "trading.brokers.credentials",
+          "specifiers": [
+            "get_credential_manager"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 60,
       "hasStructuralAnalysis": true
     },
     "scripts/broker/launch_mt5_auto.py": {
@@ -3559,7 +3549,7 @@
     },
     "scripts/broker/manage_brokers.py": {
       "filePath": "scripts/broker/manage_brokers.py",
-      "contentHash": "3957c4332b2b6fc6620bb5e6c591eaab15cfdfe7cc9878f194d248ea18ace3d3",
+      "contentHash": "51fbdb7790479346eb889f623e02684db602d7a1f8858d4172cd195496064c7a",
       "functions": [
         {
           "name": "get_master_password",
@@ -4098,7 +4088,7 @@
     },
     "scripts/trading/audit_canary_trade.py": {
       "filePath": "scripts/trading/audit_canary_trade.py",
-      "contentHash": "f89e7ade59e99519f248075d5bb716c8425c54e65617483d0197b1cd7f1a24aa",
+      "contentHash": "852e24154ddc05ade45a2a179f872c1069df62bd959a6f25534f5674d5748dd7",
       "functions": [
         {
           "name": "_read_text",
@@ -4184,7 +4174,7 @@
           ],
           "returnType": "Dict[str, Any]",
           "exported": true,
-          "lineCount": 44
+          "lineCount": 43
         },
         {
           "name": "audit_canary_trade",
@@ -4316,6 +4306,12 @@
             "List",
             "Optional"
           ]
+        },
+        {
+          "source": "trading.brokers.credentials",
+          "specifiers": [
+            "resolve_mt5_credentials"
+          ]
         }
       ],
       "exports": [
@@ -4335,7 +4331,7 @@
         "build_parser",
         "main"
       ],
-      "totalLines": 370,
+      "totalLines": 371,
       "hasStructuralAnalysis": true
     },
     "scripts/trading/run_demo_trading.py": {
@@ -6745,9 +6741,9 @@
       "totalLines": 324,
       "hasStructuralAnalysis": true
     },
-    "test_integration.py": {
-      "filePath": "test_integration.py",
-      "contentHash": "76f923238ad2efc80ac2c98aadced05a3a9d0a89c5f5c28291d91c606d71d415",
+    "test_integration_final.py": {
+      "filePath": "test_integration_final.py",
+      "contentHash": "a3087d031ad4f4687c406c4cb2246a8ee25b1aad56023a938168a5d7f1c3a254",
       "functions": [],
       "classes": [],
       "imports": [
@@ -6768,9 +6764,9 @@
       "totalLines": 15,
       "hasStructuralAnalysis": true
     },
-    "test_integration_final.py": {
-      "filePath": "test_integration_final.py",
-      "contentHash": "a3087d031ad4f4687c406c4cb2246a8ee25b1aad56023a938168a5d7f1c3a254",
+    "test_integration.py": {
+      "filePath": "test_integration.py",
+      "contentHash": "76f923238ad2efc80ac2c98aadced05a3a9d0a89c5f5c28291d91c606d71d415",
       "functions": [],
       "classes": [],
       "imports": [
@@ -8544,6 +8540,68 @@
         "test_order_book_feeds_do_not_import_execution_surfaces"
       ],
       "totalLines": 292,
+      "hasStructuralAnalysis": true
+    },
+    "tests/rootfile/test_pipeline_paper_e2e.py": {
+      "filePath": "tests/rootfile/test_pipeline_paper_e2e.py",
+      "contentHash": "55d462dbe4c14a5faa4e7587afa3cabaae43de07456b5c0e36858a23b7270624",
+      "functions": [
+        {
+          "name": "_synthetic_ohlcv",
+          "params": [],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "test_execute_runs_complete_paper_mode_order_flow_without_broker_network",
+          "params": [
+            "monkeypatch",
+            "tmp_path"
+          ],
+          "exported": true,
+          "lineCount": 60
+        }
+      ],
+      "classes": [
+        {
+          "name": "_OfflineScheduler",
+          "methods": [
+            "__init__",
+            "update_action_weights"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 13
+        }
+      ],
+      "imports": [
+        {
+          "source": "trading.kernel",
+          "specifiers": [
+            "CollapseDecision",
+            "Scheduler"
+          ]
+        },
+        {
+          "source": "trading.pipeline.orchestrator",
+          "specifiers": [
+            "PipelineOrchestrator",
+            "PipelineStage"
+          ]
+        },
+        {
+          "source": "trading.risk.risk_manager",
+          "specifiers": [
+            "ProductionRiskManager"
+          ]
+        }
+      ],
+      "exports": [
+        "_OfflineScheduler",
+        "_synthetic_ohlcv",
+        "test_execute_runs_complete_paper_mode_order_flow_without_broker_network"
+      ],
+      "totalLines": 95,
       "hasStructuralAnalysis": true
     },
     "tests/rootfile/test_pnl_persistence_safety.py": {
@@ -10673,26 +10731,6 @@
       "totalLines": 19,
       "hasStructuralAnalysis": true
     },
-    "trading/accelerated/BUILD_GUIDE.md": {
-      "filePath": "trading/accelerated/BUILD_GUIDE.md",
-      "contentHash": "e60a4cbc0a6aacca952368ee566a59bb1c65540c5bdf47e0d0c6d0588a8feec9",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 227,
-      "hasStructuralAnalysis": true
-    },
-    "trading/accelerated/WINDOWS_BUILD_FIX.md": {
-      "filePath": "trading/accelerated/WINDOWS_BUILD_FIX.md",
-      "contentHash": "065d15e046aa587bb8036ba65444a17b9dc0041bc82572da30759bb5ecc2a8ed",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 123,
-      "hasStructuralAnalysis": true
-    },
     "trading/accelerated/__init__.py": {
       "filePath": "trading/accelerated/__init__.py",
       "contentHash": "a8a6692ba120f6d0502dab0c657a9f835e34baee1001c406eae98a1e726a6175",
@@ -10719,717 +10757,6 @@
       "totalLines": 45,
       "hasStructuralAnalysis": true
     },
-    "trading/accelerated/_operators.c": {
-      "filePath": "trading/accelerated/_operators.c",
-      "contentHash": "045c69daab17db2b4fdf93a20296ccfdd75e886be875d70b1289936ddac0bc59",
-      "functions": [
-        {
-          "name": "__Pyx__IsSameCFunction",
-          "params": [
-            "func"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_init_co_variable",
-          "params": [
-            "inspect",
-            "name",
-            "write_to"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 9
-        },
-        {
-          "name": "__Pyx_init_co_variables",
-          "params": [],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 8086
-        },
-        {
-          "name": "__Pyx_PyBytes_Equals",
-          "params": [
-            "s1",
-            "s2",
-            "equals"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 46
-        },
-        {
-          "name": "__Pyx_PyUnicode_Equals",
-          "params": [
-            "s1",
-            "s2",
-            "equals"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 72
-        },
-        {
-          "name": "__Pyx_TryUnpackUnboundCMethod",
-          "params": [
-            "target"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 48
-        },
-        {
-          "name": "__Pyx_RaiseDoubleKeywordsError",
-          "params": [
-            "func_name",
-            "kw_name"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_ValidateDuplicatePosArgs",
-          "params": [
-            "kwds",
-            "argnames",
-            "first_kw_arg",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 20
-        },
-        {
-          "name": "__Pyx_MatchKeywordArg_str",
-          "params": [
-            "key",
-            "argnames",
-            "first_kw_arg",
-            "index_found",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 67
-        },
-        {
-          "name": "__Pyx_MatchKeywordArg_nostr",
-          "params": [
-            "key",
-            "argnames",
-            "first_kw_arg",
-            "index_found",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 39
-        },
-        {
-          "name": "__Pyx_MatchKeywordArg",
-          "params": [
-            "key",
-            "argnames",
-            "first_kw_arg",
-            "index_found",
-            "function_name"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 11
-        },
-        {
-          "name": "__Pyx_RejectUnknownKeyword",
-          "params": [
-            "kwds",
-            "argnames",
-            "first_kw_arg",
-            "function_name"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 41
-        },
-        {
-          "name": "__Pyx_ParseKeywordDict",
-          "params": [
-            "kwds",
-            "argnames",
-            "values",
-            "num_pos_args",
-            "num_kwargs",
-            "function_name",
-            "ignore_unknown_kwargs"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 51
-        },
-        {
-          "name": "__Pyx_ParseKeywordDictToDict",
-          "params": [
-            "kwds",
-            "argnames",
-            "kwds2",
-            "values",
-            "num_pos_args",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 57
-        },
-        {
-          "name": "__Pyx_ParseKeywordsTuple",
-          "params": [
-            "kwds",
-            "kwvalues",
-            "argnames",
-            "kwds2",
-            "values",
-            "num_pos_args",
-            "num_kwargs",
-            "function_name",
-            "ignore_unknown_kwargs"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 61
-        },
-        {
-          "name": "__Pyx_ParseKeywords",
-          "params": [
-            "kwds",
-            "kwvalues",
-            "argnames",
-            "kwds2",
-            "values",
-            "num_pos_args",
-            "num_kwargs",
-            "function_name",
-            "ignore_unknown_kwargs"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_RaiseArgtupleInvalid",
-          "params": [
-            "func_name",
-            "exact",
-            "num_min",
-            "num_max",
-            "num_found"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 24
-        },
-        {
-          "name": "__Pyx__ArgTypeTest",
-          "params": [
-            "obj",
-            "type",
-            "name",
-            "exact"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 46
-        },
-        {
-          "name": "__Pyx_Is_Little_Endian",
-          "params": [],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 9
-        },
-        {
-          "name": "__Pyx_BufFmt_Init",
-          "params": [
-            "ctx",
-            "stack",
-            "type"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 27
-        },
-        {
-          "name": "__Pyx_BufFmt_ParseNumber",
-          "params": [
-            "ts"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_BufFmt_ExpectNumber",
-          "params": [
-            "ts"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_BufFmt_RaiseUnexpectedChar",
-          "params": [
-            "ch"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 4
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToStandardSize",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToNativeSize",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 17
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToAlignment",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 17
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToPadding",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 17
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToGroup",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "char",
-          "exported": false,
-          "lineCount": 21
-        },
-        {
-          "name": "__Pyx_BufFmt_RaiseExpected",
-          "params": [
-            "ctx"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 24
-        },
-        {
-          "name": "__Pyx_BufFmt_ProcessTypeChunk",
-          "params": [
-            "ctx"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 102
-        },
-        {
-          "name": "__pyx_buffmt_parse_array",
-          "params": [
-            "ctx",
-            "tsp"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 49
-        },
-        {
-          "name": "__Pyx_SafeReleaseBuffer",
-          "params": [
-            "info"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_ZeroBuffer",
-          "params": [
-            "buf"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx__GetBufferAndValidate",
-          "params": [
-            "buf",
-            "obj",
-            "dtype",
-            "flags",
-            "nd",
-            "cast",
-            "stack"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 33
-        },
-        {
-          "name": "__Pyx_TypeTest",
-          "params": [
-            "obj",
-            "type"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx__Import_GetModule",
-          "params": [
-            "qualname",
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 12
-        },
-        {
-          "name": "__Pyx__Import_Lookup",
-          "params": [
-            "qualname",
-            "imported_names",
-            "len_imported_names",
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 48
-        },
-        {
-          "name": "__Pyx__SetItemOnTypeDict",
-          "params": [
-            "tp",
-            "k",
-            "v"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 20
-        },
-        {
-          "name": "__Pyx_fix_up_extension_type_from_spec",
-          "params": [
-            "spec",
-            "type"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 99
-        },
-        {
-          "name": "__Pyx_VerifyCachedType",
-          "params": [
-            "cached_type",
-            "name",
-            "expected_basicsize"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 31
-        },
-        {
-          "name": "__pyx_CommonTypesMetaclass_init",
-          "params": [
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 13
-        },
-        {
-          "name": "__Pyx__CyFunction_SetClassObj",
-          "params": [
-            "f",
-            "classobj"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 11
-        },
-        {
-          "name": "__Pyx_CyFunction_set_doc",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 13
-        },
-        {
-          "name": "__Pyx_CyFunction_set_name",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_set_qualname",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_init_defaults",
-          "params": [
-            "op"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 22
-        },
-        {
-          "name": "__Pyx_CyFunction_set_defaults",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_CyFunction_set_kwdefaults",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_CyFunction_set_annotations",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 16
-        },
-        {
-          "name": "__Pyx_CyFunction_raise_argument_count_error",
-          "params": [
-            "func",
-            "message",
-            "size"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_raise_type_error",
-          "params": [
-            "func",
-            "message"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_clear",
-          "params": [
-            "m"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 39
-        },
-        {
-          "name": "__Pyx__CyFunction_dealloc",
-          "params": [
-            "m"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_CyFunction_dealloc",
-          "params": [
-            "m"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_CyFunction_traverse",
-          "params": [
-            "m",
-            "visit",
-            "arg"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 40
-        },
-        {
-          "name": "__pyx_CyFunction_init",
-          "params": [
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 9
-        },
-        {
-          "name": "__Pyx_CyFunction_SetDefaultsTuple",
-          "params": [
-            "func",
-            "tuple"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_CyFunction_SetDefaultsKwDict",
-          "params": [
-            "func",
-            "dict"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_CyFunction_SetAnnotationsDict",
-          "params": [
-            "func",
-            "dict"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__pyx_bisect_code_objects",
-          "params": [
-            "entries",
-            "count",
-            "code_line"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 21
-        },
-        {
-          "name": "__pyx__insert_code_object",
-          "params": [
-            "code_cache",
-            "code_line",
-            "code_object"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 45
-        },
-        {
-          "name": "__pyx_insert_code_object",
-          "params": [
-            "code_line",
-            "code_object"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 18
-        }
-      ],
-      "classes": [],
-      "imports": [
-        {
-          "source": "Python.h",
-          "specifiers": [
-            "Python.h"
-          ]
-        },
-        {
-          "source": "stddef.h",
-          "specifiers": [
-            "stddef.h"
-          ]
-        },
-        {
-          "source": "stdint.h",
-          "specifiers": [
-            "stdint.h"
-          ]
-        },
-        {
-          "source": "compile.h",
-          "specifiers": [
-            "compile.h"
-          ]
-        },
-        {
-          "source": "frameobject.h",
-          "specifiers": [
-            "frameobject.h"
-          ]
-        },
-        {
-          "source": "traceback.h",
-          "specifiers": [
-            "traceback.h"
-          ]
-        }
-      ],
-      "exports": [],
-      "totalLines": 14945,
-      "hasStructuralAnalysis": true
-    },
     "trading/accelerated/_operators.html": {
       "filePath": "trading/accelerated/_operators.html",
       "contentHash": "ef5c639a066b675c2551e85ea14003c386782cc398f7d188f646a283fe8bdacf",
@@ -11437,707 +10764,8 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 2584,
+      "totalLines": 2585,
       "hasStructuralAnalysis": false
-    },
-    "trading/accelerated/_operators.pyx": {
-      "filePath": "trading/accelerated/_operators.pyx",
-      "contentHash": "2f3e87dcd7b3bc1f176b2e9f0fb126a0311b6c41dc997de8a190ed454b0c2c0b",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 302,
-      "hasStructuralAnalysis": false
-    },
-    "trading/accelerated/_path_integral.c": {
-      "filePath": "trading/accelerated/_path_integral.c",
-      "contentHash": "6ad67c5686b6c17bf2535635d7c790f2046f63500f4cdf93c619e33f28148fc7",
-      "functions": [
-        {
-          "name": "__Pyx__IsSameCFunction",
-          "params": [
-            "func"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_PyUnicode_Equals",
-          "params": [
-            "s1",
-            "s2",
-            "equals"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 72
-        },
-        {
-          "name": "__Pyx_TryUnpackUnboundCMethod",
-          "params": [
-            "target"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 48
-        },
-        {
-          "name": "__Pyx_RaiseDoubleKeywordsError",
-          "params": [
-            "func_name",
-            "kw_name"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_ValidateDuplicatePosArgs",
-          "params": [
-            "kwds",
-            "argnames",
-            "first_kw_arg",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 20
-        },
-        {
-          "name": "__Pyx_MatchKeywordArg_str",
-          "params": [
-            "key",
-            "argnames",
-            "first_kw_arg",
-            "index_found",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 67
-        },
-        {
-          "name": "__Pyx_MatchKeywordArg_nostr",
-          "params": [
-            "key",
-            "argnames",
-            "first_kw_arg",
-            "index_found",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 39
-        },
-        {
-          "name": "__Pyx_MatchKeywordArg",
-          "params": [
-            "key",
-            "argnames",
-            "first_kw_arg",
-            "index_found",
-            "function_name"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 11
-        },
-        {
-          "name": "__Pyx_RejectUnknownKeyword",
-          "params": [
-            "kwds",
-            "argnames",
-            "first_kw_arg",
-            "function_name"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 41
-        },
-        {
-          "name": "__Pyx_ParseKeywordDict",
-          "params": [
-            "kwds",
-            "argnames",
-            "values",
-            "num_pos_args",
-            "num_kwargs",
-            "function_name",
-            "ignore_unknown_kwargs"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 51
-        },
-        {
-          "name": "__Pyx_ParseKeywordDictToDict",
-          "params": [
-            "kwds",
-            "argnames",
-            "kwds2",
-            "values",
-            "num_pos_args",
-            "function_name"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 57
-        },
-        {
-          "name": "__Pyx_ParseKeywordsTuple",
-          "params": [
-            "kwds",
-            "kwvalues",
-            "argnames",
-            "kwds2",
-            "values",
-            "num_pos_args",
-            "num_kwargs",
-            "function_name",
-            "ignore_unknown_kwargs"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 61
-        },
-        {
-          "name": "__Pyx_ParseKeywords",
-          "params": [
-            "kwds",
-            "kwvalues",
-            "argnames",
-            "kwds2",
-            "values",
-            "num_pos_args",
-            "num_kwargs",
-            "function_name",
-            "ignore_unknown_kwargs"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_RaiseArgtupleInvalid",
-          "params": [
-            "func_name",
-            "exact",
-            "num_min",
-            "num_max",
-            "num_found"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 24
-        },
-        {
-          "name": "__Pyx_TypeTest",
-          "params": [
-            "obj",
-            "type"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_Is_Little_Endian",
-          "params": [],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 9
-        },
-        {
-          "name": "__Pyx_BufFmt_Init",
-          "params": [
-            "ctx",
-            "stack",
-            "type"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 27
-        },
-        {
-          "name": "__Pyx_BufFmt_ParseNumber",
-          "params": [
-            "ts"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_BufFmt_ExpectNumber",
-          "params": [
-            "ts"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_BufFmt_RaiseUnexpectedChar",
-          "params": [
-            "ch"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 4
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToStandardSize",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToNativeSize",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 17
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToAlignment",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 17
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToPadding",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "size_t",
-          "exported": false,
-          "lineCount": 17
-        },
-        {
-          "name": "__Pyx_BufFmt_TypeCharToGroup",
-          "params": [
-            "ch",
-            "is_complex"
-          ],
-          "returnType": "char",
-          "exported": false,
-          "lineCount": 21
-        },
-        {
-          "name": "__Pyx_BufFmt_RaiseExpected",
-          "params": [
-            "ctx"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 24
-        },
-        {
-          "name": "__Pyx_BufFmt_ProcessTypeChunk",
-          "params": [
-            "ctx"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 102
-        },
-        {
-          "name": "__pyx_buffmt_parse_array",
-          "params": [
-            "ctx",
-            "tsp"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 49
-        },
-        {
-          "name": "__Pyx_SafeReleaseBuffer",
-          "params": [
-            "info"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_ZeroBuffer",
-          "params": [
-            "buf"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx__GetBufferAndValidate",
-          "params": [
-            "buf",
-            "obj",
-            "dtype",
-            "flags",
-            "nd",
-            "cast",
-            "stack"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 33
-        },
-        {
-          "name": "__Pyx__ArgTypeTest",
-          "params": [
-            "obj",
-            "type",
-            "name",
-            "exact"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 46
-        },
-        {
-          "name": "__Pyx_RaiseBufferFallbackError",
-          "params": [],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 4
-        },
-        {
-          "name": "__Pyx__Import_GetModule",
-          "params": [
-            "qualname",
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 12
-        },
-        {
-          "name": "__Pyx__Import_Lookup",
-          "params": [
-            "qualname",
-            "imported_names",
-            "len_imported_names",
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 48
-        },
-        {
-          "name": "__Pyx__SetItemOnTypeDict",
-          "params": [
-            "tp",
-            "k",
-            "v"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 20
-        },
-        {
-          "name": "__Pyx_fix_up_extension_type_from_spec",
-          "params": [
-            "spec",
-            "type"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 99
-        },
-        {
-          "name": "__Pyx_VerifyCachedType",
-          "params": [
-            "cached_type",
-            "name",
-            "expected_basicsize"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 31
-        },
-        {
-          "name": "__pyx_CommonTypesMetaclass_init",
-          "params": [
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 13
-        },
-        {
-          "name": "__Pyx__CyFunction_SetClassObj",
-          "params": [
-            "f",
-            "classobj"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 11
-        },
-        {
-          "name": "__Pyx_CyFunction_set_doc",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 13
-        },
-        {
-          "name": "__Pyx_CyFunction_set_name",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_set_qualname",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_init_defaults",
-          "params": [
-            "op"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 22
-        },
-        {
-          "name": "__Pyx_CyFunction_set_defaults",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_CyFunction_set_kwdefaults",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 18
-        },
-        {
-          "name": "__Pyx_CyFunction_set_annotations",
-          "params": [
-            "op",
-            "value",
-            "context"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 16
-        },
-        {
-          "name": "__Pyx_CyFunction_raise_argument_count_error",
-          "params": [
-            "func",
-            "message",
-            "size"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_raise_type_error",
-          "params": [
-            "func",
-            "message"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 15
-        },
-        {
-          "name": "__Pyx_CyFunction_clear",
-          "params": [
-            "m"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 39
-        },
-        {
-          "name": "__Pyx__CyFunction_dealloc",
-          "params": [
-            "m"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 7
-        },
-        {
-          "name": "__Pyx_CyFunction_dealloc",
-          "params": [
-            "m"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_CyFunction_traverse",
-          "params": [
-            "m",
-            "visit",
-            "arg"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 40
-        },
-        {
-          "name": "__pyx_CyFunction_init",
-          "params": [
-            "module"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 9
-        },
-        {
-          "name": "__Pyx_CyFunction_SetDefaultsTuple",
-          "params": [
-            "func",
-            "tuple"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_CyFunction_SetDefaultsKwDict",
-          "params": [
-            "func",
-            "dict"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__Pyx_CyFunction_SetAnnotationsDict",
-          "params": [
-            "func",
-            "dict"
-          ],
-          "returnType": "CYTHON_INLINE",
-          "exported": false,
-          "lineCount": 5
-        },
-        {
-          "name": "__pyx_bisect_code_objects",
-          "params": [
-            "entries",
-            "count",
-            "code_line"
-          ],
-          "returnType": "int",
-          "exported": false,
-          "lineCount": 21
-        },
-        {
-          "name": "__pyx__insert_code_object",
-          "params": [
-            "code_cache",
-            "code_line",
-            "code_object"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 45
-        },
-        {
-          "name": "__pyx_insert_code_object",
-          "params": [
-            "code_line",
-            "code_object"
-          ],
-          "returnType": "void",
-          "exported": false,
-          "lineCount": 18
-        }
-      ],
-      "classes": [],
-      "imports": [
-        {
-          "source": "Python.h",
-          "specifiers": [
-            "Python.h"
-          ]
-        },
-        {
-          "source": "stddef.h",
-          "specifiers": [
-            "stddef.h"
-          ]
-        },
-        {
-          "source": "stdint.h",
-          "specifiers": [
-            "stdint.h"
-          ]
-        },
-        {
-          "source": "compile.h",
-          "specifiers": [
-            "compile.h"
-          ]
-        },
-        {
-          "source": "frameobject.h",
-          "specifiers": [
-            "frameobject.h"
-          ]
-        },
-        {
-          "source": "traceback.h",
-          "specifiers": [
-            "traceback.h"
-          ]
-        }
-      ],
-      "exports": [],
-      "totalLines": 14083,
-      "hasStructuralAnalysis": true
     },
     "trading/accelerated/_path_integral.html": {
       "filePath": "trading/accelerated/_path_integral.html",
@@ -12146,17 +10774,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 1922,
-      "hasStructuralAnalysis": false
-    },
-    "trading/accelerated/_path_integral.pyx": {
-      "filePath": "trading/accelerated/_path_integral.pyx",
-      "contentHash": "ea575bf6eb8cc05d735ee3cd1a42074943e3f230b0fff8927a016cb055a92f34",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 262,
+      "totalLines": 1923,
       "hasStructuralAnalysis": false
     },
     "trading/accelerated/backend_selector.py": {
@@ -12276,6 +10894,16 @@
       "totalLines": 433,
       "hasStructuralAnalysis": true
     },
+    "trading/accelerated/BUILD_GUIDE.md": {
+      "filePath": "trading/accelerated/BUILD_GUIDE.md",
+      "contentHash": "e60a4cbc0a6aacca952368ee566a59bb1c65540c5bdf47e0d0c6d0588a8feec9",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 227,
+      "hasStructuralAnalysis": true
+    },
     "trading/accelerated/build_windows.bat": {
       "filePath": "trading/accelerated/build_windows.bat",
       "contentHash": "cac9f0dac192efeb8c614b515eb2cab998ace56f777c6e5ca1eb533abaa9d860",
@@ -12283,17 +10911,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 115,
-      "hasStructuralAnalysis": false
-    },
-    "trading/accelerated/mojo/core/trajectory_engine.mojo": {
-      "filePath": "trading/accelerated/mojo/core/trajectory_engine.mojo",
-      "contentHash": "71f136c6acfecec9b55d9ba437652ce416b5fd2883a09fba4836aba0c769d53e",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 346,
+      "totalLines": 116,
       "hasStructuralAnalysis": false
     },
     "trading/accelerated/mojo_bridge.py": {
@@ -12446,6 +11064,16 @@
       ],
       "exports": [],
       "totalLines": 87,
+      "hasStructuralAnalysis": true
+    },
+    "trading/accelerated/WINDOWS_BUILD_FIX.md": {
+      "filePath": "trading/accelerated/WINDOWS_BUILD_FIX.md",
+      "contentHash": "065d15e046aa587bb8036ba65444a17b9dc0041bc82572da30759bb5ecc2a8ed",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 123,
       "hasStructuralAnalysis": true
     },
     "trading/action/upgraded_action_curvature.py": {
@@ -14179,7 +12807,7 @@
     },
     "trading/brokers/deriv_broker.py": {
       "filePath": "trading/brokers/deriv_broker.py",
-      "contentHash": "42388cc697ed7ac4961e2cae9a4734257108fa9beed9c13108b7064b859bb251",
+      "contentHash": "e63776e77815d6d75563a64e0a5885567ea639b11886326d1946e3e714692ebf",
       "functions": [],
       "classes": [
         {
@@ -14308,13 +12936,19 @@
           "specifiers": [
             "append_execution_evidence"
           ]
+        },
+        {
+          "source": "trading.brokers.credentials",
+          "specifiers": [
+            "resolve_deriv_api_token"
+          ]
         }
       ],
       "exports": [
         "DerivOrder",
         "DerivBroker"
       ],
-      "totalLines": 631,
+      "totalLines": 632,
       "hasStructuralAnalysis": true
     },
     "trading/brokers/market_data.py": {
@@ -14379,7 +13013,7 @@
     },
     "trading/brokers/mt5_broker.py": {
       "filePath": "trading/brokers/mt5_broker.py",
-      "contentHash": "a1f2a460887920d3c1f0b8f5cfa0822ee71ebad8b54b9b1fe4d671428b66cf36",
+      "contentHash": "aebffaec91e6fd0cb7f30eaeca8184ed0ab7d148bbd8a9362e6f14dac7a4628d",
       "functions": [
         {
           "name": "_filling_mode",
@@ -14447,7 +13081,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 576
+          "lineCount": 577
         },
         {
           "name": "MT5PositionCloseTracker",
@@ -14536,6 +13170,12 @@
           "specifiers": [
             "append_execution_evidence"
           ]
+        },
+        {
+          "source": "trading.brokers.credentials",
+          "specifiers": [
+            "resolve_mt5_credentials"
+          ]
         }
       ],
       "exports": [
@@ -14545,7 +13185,7 @@
         "MT5Broker",
         "MT5PositionCloseTracker"
       ],
-      "totalLines": 788,
+      "totalLines": 790,
       "hasStructuralAnalysis": true
     },
     "trading/brokers/multi_broker_sync.py": {
@@ -15013,16 +13653,6 @@
       ],
       "totalLines": 319,
       "hasStructuralAnalysis": true
-    },
-    "trading/brokers/tradingview_pine.pine": {
-      "filePath": "trading/brokers/tradingview_pine.pine",
-      "contentHash": "43df7701f92eac5e91d7a4af25985d52faff5813a75420e26b82fafc8785f7e5",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 161,
-      "hasStructuralAnalysis": false
     },
     "trading/config/__init__.py": {
       "filePath": "trading/config/__init__.py",
@@ -15582,7 +14212,7 @@
     },
     "trading/feedback/demo_settlement.py": {
       "filePath": "trading/feedback/demo_settlement.py",
-      "contentHash": "6a1a24699910ce62dd65c3d1f57af12647691f12e68c957342fb857c54fddf2f",
+      "contentHash": "788318fe9ce271711531554ae36d63f3aad976b58185be4a95bd7b8a434370e2",
       "functions": [
         {
           "name": "_float",
@@ -15759,7 +14389,7 @@
           ],
           "returnType": "tuple[List[Any], List[Any]]",
           "exported": true,
-          "lineCount": 18
+          "lineCount": 23
         },
         {
           "name": "_build_ml_artifacts",
@@ -15963,7 +14593,7 @@
         "_build_ml_artifacts",
         "settle_demo_trades"
       ],
-      "totalLines": 494,
+      "totalLines": 499,
       "hasStructuralAnalysis": true
     },
     "trading/feedback/deriv_settlement.py": {
@@ -17170,170 +15800,6 @@
       "totalLines": 179,
       "hasStructuralAnalysis": true
     },
-    "trading/kernel/H_constraints.py": {
-      "filePath": "trading/kernel/H_constraints.py",
-      "contentHash": "c2c8b3f8d61a1054d8650a8325014fdf0bbb77428bb7db8a1573dce6701400e8",
-      "functions": [],
-      "classes": [
-        {
-          "name": "ConstraintType",
-          "methods": [],
-          "properties": [],
-          "exported": true,
-          "lineCount": 7
-        },
-        {
-          "name": "ConstraintViolation",
-          "methods": [],
-          "properties": [
-            "constraint_name",
-            "constraint_type",
-            "violation_details",
-            "severity"
-          ],
-          "exported": true,
-          "lineCount": 6
-        },
-        {
-          "name": "Projector",
-          "methods": [
-            "__init__",
-            "set_check",
-            "apply",
-            "verify_idempotent"
-          ],
-          "properties": [],
-          "exported": true,
-          "lineCount": 33
-        },
-        {
-          "name": "ConstraintHamiltonian",
-          "methods": [
-            "__init__",
-            "_initialize_projectors",
-            "_check_session",
-            "_check_risk",
-            "_check_regime",
-            "_check_sequence",
-            "_check_reconciliation",
-            "evaluate_projectors",
-            "apply_constraints",
-            "get_admissibility_status",
-            "has_fatal_violations"
-          ],
-          "properties": [],
-          "exported": true,
-          "lineCount": 214
-        }
-      ],
-      "imports": [
-        {
-          "source": "numpy",
-          "specifiers": [
-            "np"
-          ]
-        },
-        {
-          "source": "typing",
-          "specifiers": [
-            "Dict",
-            "List",
-            "Optional",
-            "Any",
-            "Callable"
-          ]
-        },
-        {
-          "source": "dataclasses",
-          "specifiers": [
-            "dataclass"
-          ]
-        },
-        {
-          "source": "enum",
-          "specifiers": [
-            "Enum"
-          ]
-        }
-      ],
-      "exports": [
-        "ConstraintType",
-        "ConstraintViolation",
-        "Projector",
-        "ConstraintHamiltonian"
-      ],
-      "totalLines": 282,
-      "hasStructuralAnalysis": true
-    },
-    "trading/kernel/H_field.py": {
-      "filePath": "trading/kernel/H_field.py",
-      "contentHash": "cf2251d220999ecaa104484dabf491291e542ff444d2acc5907a6ede88728560",
-      "functions": [],
-      "classes": [
-        {
-          "name": "FieldEvaluation",
-          "methods": [
-            "to_dict"
-          ],
-          "properties": [
-            "field_tensor",
-            "polarity",
-            "causal_status",
-            "coupling",
-            "field_admissible",
-            "reasons"
-          ],
-          "exported": true,
-          "lineCount": 19
-        },
-        {
-          "name": "FieldHamiltonian",
-          "methods": [
-            "evaluate"
-          ],
-          "properties": [],
-          "exported": true,
-          "lineCount": 27
-        }
-      ],
-      "imports": [
-        {
-          "source": "dataclasses",
-          "specifiers": [
-            "dataclass",
-            "field"
-          ]
-        },
-        {
-          "source": "typing",
-          "specifiers": [
-            "Dict",
-            "List"
-          ]
-        },
-        {
-          "source": "core.meta",
-          "specifiers": [
-            "OperatorMeta"
-          ]
-        },
-        {
-          "source": "trading.fields",
-          "specifiers": [
-            "check_causal_reach",
-            "compute_magnetoelectric_coupling",
-            "compute_maxwell_tensor",
-            "detect_polarity"
-          ]
-        }
-      ],
-      "exports": [
-        "FieldEvaluation",
-        "FieldHamiltonian"
-      ],
-      "totalLines": 74,
-      "hasStructuralAnalysis": true
-    },
     "trading/kernel/__init__.py": {
       "filePath": "trading/kernel/__init__.py",
       "contentHash": "8c4982cb1ba46277956b17ca43227d2373aff954bda1a17cb336414b41a2ba6c",
@@ -17497,6 +15963,170 @@
         "ApexEngine"
       ],
       "totalLines": 380,
+      "hasStructuralAnalysis": true
+    },
+    "trading/kernel/H_constraints.py": {
+      "filePath": "trading/kernel/H_constraints.py",
+      "contentHash": "c2c8b3f8d61a1054d8650a8325014fdf0bbb77428bb7db8a1573dce6701400e8",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ConstraintType",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "ConstraintViolation",
+          "methods": [],
+          "properties": [
+            "constraint_name",
+            "constraint_type",
+            "violation_details",
+            "severity"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "Projector",
+          "methods": [
+            "__init__",
+            "set_check",
+            "apply",
+            "verify_idempotent"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "ConstraintHamiltonian",
+          "methods": [
+            "__init__",
+            "_initialize_projectors",
+            "_check_session",
+            "_check_risk",
+            "_check_regime",
+            "_check_sequence",
+            "_check_reconciliation",
+            "evaluate_projectors",
+            "apply_constraints",
+            "get_admissibility_status",
+            "has_fatal_violations"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 214
+        }
+      ],
+      "imports": [
+        {
+          "source": "numpy",
+          "specifiers": [
+            "np"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Dict",
+            "List",
+            "Optional",
+            "Any",
+            "Callable"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "enum",
+          "specifiers": [
+            "Enum"
+          ]
+        }
+      ],
+      "exports": [
+        "ConstraintType",
+        "ConstraintViolation",
+        "Projector",
+        "ConstraintHamiltonian"
+      ],
+      "totalLines": 282,
+      "hasStructuralAnalysis": true
+    },
+    "trading/kernel/H_field.py": {
+      "filePath": "trading/kernel/H_field.py",
+      "contentHash": "cf2251d220999ecaa104484dabf491291e542ff444d2acc5907a6ede88728560",
+      "functions": [],
+      "classes": [
+        {
+          "name": "FieldEvaluation",
+          "methods": [
+            "to_dict"
+          ],
+          "properties": [
+            "field_tensor",
+            "polarity",
+            "causal_status",
+            "coupling",
+            "field_admissible",
+            "reasons"
+          ],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "FieldHamiltonian",
+          "methods": [
+            "evaluate"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 27
+        }
+      ],
+      "imports": [
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Dict",
+            "List"
+          ]
+        },
+        {
+          "source": "core.meta",
+          "specifiers": [
+            "OperatorMeta"
+          ]
+        },
+        {
+          "source": "trading.fields",
+          "specifiers": [
+            "check_causal_reach",
+            "compute_magnetoelectric_coupling",
+            "compute_maxwell_tensor",
+            "detect_polarity"
+          ]
+        }
+      ],
+      "exports": [
+        "FieldEvaluation",
+        "FieldHamiltonian"
+      ],
+      "totalLines": 74,
       "hasStructuralAnalysis": true
     },
     "trading/kernel/scheduler.py": {
@@ -22575,6 +21205,35 @@
       "totalLines": 302,
       "hasStructuralAnalysis": true
     },
+    "validation/legacy/test_integration_final.py": {
+      "filePath": "validation/legacy/test_integration_final.py",
+      "contentHash": "6ce0483d70227a1cc94478683bf0ee0d356c8d4e8cc82c4124af7e452212fbbe",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 223,
+      "hasStructuralAnalysis": true
+    },
     "validation/legacy/test_integration.py": {
       "filePath": "validation/legacy/test_integration.py",
       "contentHash": "ebf1c97bcaba229f98cccb3559b3981f4bfd3a5f3a4d9f3a922adcbd2120ffec",
@@ -22652,35 +21311,6 @@
         "make_ohlcv"
       ],
       "totalLines": 126,
-      "hasStructuralAnalysis": true
-    },
-    "validation/legacy/test_integration_final.py": {
-      "filePath": "validation/legacy/test_integration_final.py",
-      "contentHash": "6ce0483d70227a1cc94478683bf0ee0d356c8d4e8cc82c4124af7e452212fbbe",
-      "functions": [],
-      "classes": [],
-      "imports": [
-        {
-          "source": "os",
-          "specifiers": [
-            "os"
-          ]
-        },
-        {
-          "source": "sys",
-          "specifiers": [
-            "sys"
-          ]
-        },
-        {
-          "source": "time",
-          "specifiers": [
-            "time"
-          ]
-        }
-      ],
-      "exports": [],
-      "totalLines": 223,
       "hasStructuralAnalysis": true
     },
     "validation/legacy/test_live_trading.py": {

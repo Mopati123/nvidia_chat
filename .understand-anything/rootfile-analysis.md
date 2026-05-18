@@ -10,13 +10,13 @@
 - docs/: 25 analyzed files
 - infra/: 1 analyzed files
 - registry/: 4 analyzed files
-- root/: 13 analyzed files
+- root/: 12 analyzed files
 - scripts/: 26 analyzed files
 - tachyonic_chain/: 3 analyzed files
 - taep/: 19 analyzed files
-- tests/: 28 analyzed files
+- tests/: 29 analyzed files
 - tools/: 6 analyzed files
-- trading/: 123 analyzed files
+- trading/: 117 analyzed files
 - validation/: 27 analyzed files
 
 ## Canonical Layers
@@ -38,6 +38,15 @@
 - Trading Engine
 - Validation
 
+## Rootfile H1-H13 Execution Map
+- H1-H4 prepare typed market state, liquidity geometry, connection, and curvature diagnostics.
+- H5-H7 generate candidate futures, compress behavior families, and score path action.
+- H8-H9 refuse inadmissible proposals and require measured entropy/information gain before collapse.
+- H10 gives scheduler authority sole permission to issue execution tokens.
+- H11 allows broker execution only after execution-boundary token validation.
+- H12 reconciles intended vs realized broker outcomes for settlement and learning.
+- H13 records every refusal, authorization, execution, audit, and settlement into verifiable evidence.
+
 ## Key Runtime Areas
 - Authority and token validation: core/authority, taep, and trading/kernel.
 - Orchestration and scheduler collapse: core/orchestration and trading/kernel.
@@ -46,6 +55,6 @@
 - Evidence and validation: tachyonic_chain, validation, tests, and rootfile suites.
 
 ## Refresh Metadata
-- Commit: fa8f001645f56d802f6a0d80e40236ecba744d8c
-- Timestamp: 2026-05-12T15:03:45.754Z
-- Files analyzed: 332
+- Commit: c08fa30c99674c42e3b597bf0a0579eee6c60d68
+- Timestamp: 2026-05-13T11:33:15.390Z
+- Files analyzed: 326

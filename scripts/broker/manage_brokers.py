@@ -118,7 +118,7 @@ def cmd_test_deriv(name: str = "demo"):
     
     token = cred.credentials.get("token", "")
     print(f"\n📡 Connecting to Deriv API...")
-    print(f"   Token: ...{token[-4:]}")
+    print(f"   Token: {'present' if token else 'missing'}")
     print(f"   Demo: {'Yes' if cred.is_demo else 'No'}")
     
     success, message, info = DerivBroker.test_connection(token)

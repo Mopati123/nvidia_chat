@@ -4,6 +4,12 @@ import sys
 import os
 sys.path.insert(0, '.')
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from trading.brokers.credentials import get_credential_manager
 
 ACCOUNT_ID = os.environ.get("MT5_ACCOUNT_ID", "").strip()
@@ -47,6 +53,7 @@ if success:
         print(f"   Type: {'DEMO' if cred.is_demo else 'LIVE'}")
         print("\n[OK] Ready to test connection!")
         print("   Run: python -m scripts.broker.setup_credentials test mt5 default")
+        print("   After testing, remove plaintext MT5 secrets from .env")
 else:
     print("[ERROR] Failed to store credentials")
     sys.exit(1)

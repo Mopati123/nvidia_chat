@@ -16,6 +16,7 @@ from datetime import datetime, timezone, timedelta
 
 from core.authority.token_validator import validate_token
 from tachyonic_chain.audit_log import append_execution_evidence
+from trading.brokers.credentials import resolve_mt5_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,11 @@ class MT5Broker:
     def __init__(self, account: Optional[int] = None,
                  password: Optional[str] = None,
                  server: Optional[str] = None):
-        _env_acct = os.getenv("MT5_ACCOUNT_ID", "")
-        self.account  = account  or (int(_env_acct) if _env_acct.isdigit() else None)
-        self.password = password or os.getenv("MT5_PASSWORD")
-        self.server   = server   or os.getenv("MT5_SERVER")
+        self.account, self.password, self.server = resolve_mt5_credentials(
+            account,
+            password,
+            server,
+        )
         self.connected = False
 
     @staticmethod
