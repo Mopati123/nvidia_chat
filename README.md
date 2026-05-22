@@ -19,6 +19,32 @@ Instead of simple indicators (RSI, MACD), this system:
 
 ---
 
+## Current Software State
+
+ApexQuantumICT currently stands as a rootfile-governed lawful-collapse trading runtime. Its core invariant is:
+
+```text
+Possibility cannot execute itself.
+```
+
+The system can analyze market data, generate candidate futures, score and filter trade proposals, request scheduler authority, execute only after token validation, reconcile realized outcomes, emit hash-linked evidence, and feed settlement results back into learning.
+
+Current capabilities include:
+
+1. **Full 20-stage runtime kernel** - `PipelineOrchestrator` carries a market observation from raw data through state construction, ICT extraction, geometry, trajectory generation, Ramanujan compression, action scoring, path selection, proposal generation, risk, entropy, scheduler collapse, execution, reconciliation, evidence, and weight update.
+2. **Stage operator contracts** - every canonical pipeline stage is mapped to an H1-H13 rootfile law through `trading/pipeline/stage_contracts.py`.
+3. **Deterministic stage proofs** - each stage records redacted input/output hashes, previous proof hash, operator id, canonical law, checkpoint hash, and refusal code through `trading/pipeline/stage_proof.py`.
+4. **Refusal-first execution safety** - proposals must pass admissibility, entropy, scheduler authority, kill-switch checks, and broker token validation before any paper, Deriv demo, or MT5 demo side effect.
+5. **Broker execution boundaries** - Deriv and MT5 integrations support demo-account workflows, secure credential resolution, token-validated execution calls, settlement, and audit. The system does not require secrets to be committed to Git.
+6. **Evidence and reconciliation loop** - runtime events, refusals, broker outcomes, settlements, and learning feedback can be written into SHA-256 hash-chained evidence logs and checked for integrity.
+7. **Learning feedback** - PPO/backward-weight update hooks can consume reconciled paper, MT5 demo, and Deriv demo settlement outcomes.
+8. **Operational surfaces** - CLI runners, broker setup scripts, preflight checks, settlement commands, a FastAPI dashboard, Telegram integration, and rootfile validators support operating and observing the runtime.
+9. **Architecture intelligence** - `.understand-anything/` contains the generated knowledge graph, rootfile architecture analysis, and the superposition/evolution model used to understand the repo as a coherent software system.
+
+The current trusted local proof path is the offline paper-mode E2E test in `tests/rootfile/test_pipeline_paper_e2e.py`. Live-demo Deriv and MT5 runs remain intentionally gated: a no-trade refusal can be valid behavior when risk, entropy, scheduler, broker, or preflight gates reject the setup.
+
+---
+
 ## Documentation
 
 | Guide | Description |
@@ -253,7 +279,7 @@ export DAILY_LOSS_LIMIT="500"
 
 ---
 
-## Production Hardening (T3-A)
+## Runtime Safety And Proof Governance
 
 **Circuit Breaker** — Stage 15 (Scheduler Collapse):
 - 10 consecutive failures → circuit opens → `risk_manager.trigger_kill_switch()` fires automatically
@@ -264,6 +290,11 @@ export DAILY_LOSS_LIMIT="500"
 - Tracks `|predicted_pnl - realized_pnl| / max(|predicted_pnl|, 1.0)` per execution
 - >15% divergence → weight penalty applied via `scheduler.update_action_weights()`
 - Rolling 100-trade histogram with mean/std/p95 stats
+
+**Stage Proof Chain** - All canonical stages:
+- Each `StageResult` carries operator metadata, canonical law, input hash, output hash, previous hash, proof hash, and refusal code.
+- Terminal `COMPLETED` and `FAILED` records close the proof chain so offline paper runs are auditable end to end.
+- Secret-like keys such as tokens, passwords, credentials, API keys, and signatures are redacted before hashing.
 
 ---
 
@@ -276,6 +307,7 @@ See [T3_ROADMAP.md](docs/roadmaps/T3_ROADMAP.md) for the full strategic plan.
 | T1 (A/B/C) | Security, legacy O1-O18 operators, regime wiring | COMPLETE |
 | T2 (A–H) | Geodesic trajectories, FAISS, PPO, async, dashboard, Mojo | COMPLETE |
 | T3-A | Circuit breaker + PnL divergence | COMPLETE |
+| Rootfile stage proofs | Operator contracts + deterministic stage proof chain | COMPLETE |
 | T3-C | Prometheus metrics + Grafana | Planned |
 | T3-D | Slippage model + partial fill | Planned |
 | T3-B | GPU trajectory batching (50–200×) | Planned |
@@ -302,5 +334,5 @@ MIT License — See [LICENSE](LICENSE) file.
 
 ---
 
-**Version:** 2.0.0 (T3-A)
-**Last Updated:** 2026-04-23
+**Version:** 2.1.0 (rootfile stage-proof runtime)
+**Last Updated:** 2026-05-22
